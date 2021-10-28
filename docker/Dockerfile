@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.2.0-cudnn8-devel-ubuntu18.04
+FROM nvidia/cuda:11.0-cudnn8-devel-ubuntu18.04
  
 SHELL [ "/bin/bash", "--login", "-c" ]
  
@@ -67,8 +67,7 @@ RUN conda update --name base --channel defaults conda && \
    conda create --name dino && \
    conda clean --all --yes
 RUN conda activate dino
-RUN conda install pytorch=1.7.1
-RUN conda install torchvision=0.8.2
+RUN conda install -c pytorch torchvision=0.8.2 cudatoolkit=11.0 pytorch=1.7.1
 RUN pip install timm==0.3.2
 
 RUN conda install -c conda-forge jupyterlab
