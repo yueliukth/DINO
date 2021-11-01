@@ -1,0 +1,16 @@
+{
+"dataloader_params": {"trainloader":{"batch_size": 12,
+                                     "num_workers": 6,
+                                     "pin_memory": True,
+                                      "drop_last": True},
+                      "valloader": { "batch_size": 12,
+                                     "num_workers": 6,
+                                     "pin_memory": True,
+                                     "drop_last": True}
+                      },
+
+
+"system_params": {"num_gpus": 2,
+                  "gpu_ids": "0,1",
+                  "random_seed": 6111},
+}
