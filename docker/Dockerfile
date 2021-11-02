@@ -68,6 +68,7 @@ RUN conda update --name base --channel defaults conda && \
    conda clean --all --yes
 RUN conda activate dino
 RUN conda install -c pytorch torchvision=0.8.2 cudatoolkit=11.0 pytorch=1.7.1
+RUN pip install torchsummary
 RUN pip install timm==0.3.2
 
 RUN conda install -c conda-forge jupyterlab
