@@ -5,23 +5,23 @@ from torchvision.datasets import ImageFolder
 from torchvision.transforms import ToTensor
 from fastai.vision.all import *
 
-def get_train_test_data(dataset_name, transforms):
+def get_train_test_data(dataset_params, transforms):
     transforms = ToTensor()
-    if dataset_name == 'ImageNet':
+    if dataset_params['dataset_name'] == 'ImageNet':
         return None
-    elif dataset_name == 'FashionMNIST':
+    elif dataset_params['dataset_name'] == 'FashionMNIST':
         training_data = datasets.FashionMNIST(
-            root="../data",
+            root=dataset_params['data_folder'],
             train=True,
             download=True,
             transform=transforms)
         test_data = datasets.FashionMNIST(
-            root="../data",
+            root=dataset_params['data_folder'],
             train=False,
             download=True,
             transform=transforms)
-    elif dataset_name == 'IMAGENETTE':
-        target_path = "../data/imagenette2"
+    elif dataset_params['dataset_name'] == 'IMAGENETTE':
+        target_path = os.path.join(dataset_params['data_folder'], "imagenette2")
         target_path = os.path.abspath(target_path)
         if not os.path.exists(target_path) or len(os.listdir(target_path)) == 0:
             # If IMAGENETTE does not exist in data folder, we download it with fastai

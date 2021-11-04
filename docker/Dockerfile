@@ -80,6 +80,7 @@ RUN conda install -c conda-forge opencv
 RUN conda install -c conda-forge scikit-learn
 RUN conda install -c conda-forge scikit-image
 RUN conda install -c fastchan fastai
+RUN pip install kaggle
 
 USER root
 RUN apt-get update -y

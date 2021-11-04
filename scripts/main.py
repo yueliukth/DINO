@@ -58,7 +58,7 @@ def train_process(rank, args, start_training=True):
         augmentation_params['global_size'],
         augmentation_params['local_size']
     )
-    training_dataset, test_dataset = build_datasets.get_train_test_data(dataset_params['dataset_name'], transforms)
+    training_dataset, test_dataset = build_datasets.get_train_test_data(dataset_params, transforms)
 
     # Set sampler that restricts data loading to a subset of the dataset
     # In conjunction with torch.nn.parallel.DistributedDataParallel

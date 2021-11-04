@@ -1,5 +1,7 @@
 {
-"dataset_params": {"dataset_name": "FashionMNIST"}, # "ImageNet", "FashionMNIST", "IMAGENETTE"
+"dataset_params": { "dataset_name": "FashionMNIST", # "ImageNet", "FashionMNIST", "IMAGENETTE"
+                    "data_folder": "/storage/yue/data/",
+                  },
 "dataloader_params": {"trainloader":{"batch_size": 12,
                                      "num_workers": 6,
                                      "pin_memory": True,
@@ -8,7 +10,7 @@
                                      "num_workers": 6,
                                      "pin_memory": True,
                                      "drop_last": True}
-                      },
+                     },
 "augmentation_params": {"global_crops_scale": [0.4, 1.],
                         "local_crops_scale": [0.05, 0.4],
                         "local_crops_number": 8,
@@ -27,4 +29,4 @@
 "system_params": {"num_gpus": 2,
                   "gpu_ids": "0,1",
                   "random_seed": 6111},
-}
+                 }
