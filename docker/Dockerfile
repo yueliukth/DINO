@@ -79,6 +79,7 @@ RUN conda install -c conda-forge pydicom
 RUN conda install -c conda-forge opencv
 RUN conda install -c conda-forge scikit-learn
 RUN conda install -c conda-forge scikit-image
+RUN conda install -c fastchan fastai
 
 USER root
 RUN apt-get update -y

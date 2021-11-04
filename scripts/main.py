@@ -2,21 +2,19 @@ import os
 import sys
 import yaml
 import argparse
-
 import numpy as np
 
 import torch
 from torch.utils.data import Dataset
 from torchvision import datasets
-from torchvision.transforms import ToTensor
 from torch.utils.data import DataLoader
 from torchvision import models as torchvision_models
 import torch.nn as nn
 
-import build_models
 import helper
-import vit_models as vits
-from vit_models import DINOHead
+import augmentations
+import build_models
+import build_datasets
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -39,9 +37,11 @@ def parse_args(params_path=None):
 def train_process(rank, args, start_training=True):
     print(f'Rank: {rank}. Start preparing for training ', end='\n\n')
 
+    dataset_params = args['dataset_params']
     system_params = args['system_params']
     dataloader_params = args['dataloader_params']
     model_params = args['model_params']
+    augmentation_params = args['augmentation_params']
 
     trainloader_params = dataloader_params['trainloader']
     valloader_params = dataloader_params['valloader']
@@ -50,42 +50,78 @@ def train_process(rank, args, start_training=True):
     helper.set_sys_params(system_params)
 
     # TODO: Set up data loader with augmentations
-    # Load an example Dataset with distributed training, for debugging purpose
-    training_data = datasets.FashionMNIST(
-        root="../data",
-        train=True,
-        download=True,
-        transform=ToTensor())
-    test_data = datasets.FashionMNIST(
-        root="../data",
-        train=False,
-        download=True,
-        transform=ToTensor())
+    # Load an example Dataset with augmentations
+    transforms = augmentations.DataAugmentationDINO(
+        augmentation_params['global_crops_scale'],
+        augmentation_params['local_crops_scale'],
+        augmentation_params['local_crops_number'],
+        augmentation_params['global_size'],
+        augmentation_params['local_size']
+    )
+    training_dataset, test_dataset = build_datasets.get_train_test_data(dataset_params['dataset_name'], transforms)
 
     # Set sampler that restricts data loading to a subset of the dataset
     # In conjunction with torch.nn.parallel.DistributedDataParallel
-    training_sampler = torch.utils.data.DistributedSampler(training_data, shuffle=True)
-    test_sampler = torch.utils.data.DistributedSampler(test_data, shuffle=True)
+    training_sampler = torch.utils.data.DistributedSampler(training_dataset, shuffle=True)
+    test_sampler = torch.utils.data.DistributedSampler(test_dataset, shuffle=True)
 
     # Prepare the data for training with DataLoaders
-    train_dataloader = DataLoader(training_data, sampler=training_sampler, batch_size=int(trainloader_params['batch_size']/system_params['num_gpus']),
+    # pin_memory makes transferring images from CPU to GPU faster
+    train_dataloader = DataLoader(training_dataset, sampler=training_sampler, batch_size=int(trainloader_params['batch_size']/system_params['num_gpus']),
                                   num_workers=trainloader_params['num_workers'], pin_memory=trainloader_params['pin_memory'], drop_last=trainloader_params['drop_last'])
-    test_dataloader = DataLoader(test_data, sampler=test_sampler, batch_size=int(valloader_params['batch_size']/system_params['num_gpus']),
+    test_dataloader = DataLoader(test_dataset, sampler=test_sampler, batch_size=int(valloader_params['batch_size']/system_params['num_gpus']),
                                  num_workers=valloader_params['num_workers'], pin_memory=valloader_params['pin_memory'], drop_last=valloader_params['drop_last'])
     print(f"Rank: {rank}. Data loaded: there are {len(train_dataloader)} train_dataloaders. ")
     print(f"Rank: {rank}. Data loaded: there are {len(test_dataloader)} test_dataloaders. ", end='\n\n')
 
     # TODO: Build the student and teacher networks
     print(f"Rank: {rank}. Creating model: {model_params['backbone_option']}", end='\n\n')
-    model = build_models.DINO(rank, model_params)
-    # Move the model to gpu
-    model = model.cuda()
-    model= nn.parallel.DistributedDataParallel(model, device_ids=[rank])
-    print(model)
-    
-    x = torch.randn(1, 3, 28, 28).cuda(non_blocking=True)
+    student_backbone, student_head, teacher_backbone, teacher_head = build_models.build_dino(model_params)
+
+    student = build_models.MultiCropWrapper(student_backbone, student_head)
+    teacher = build_models.MultiCropWrapper(teacher_backbone, teacher_head)
+
+    # Move networks to gpu
+    # This step is necessary for DDP later
+    student, teacher = student.cuda(),teacher.cuda()
+
+    # Synchronize batch norms (if any)
+    if helper.has_batchnorms(student):
+        student = nn.SyncBatchNorm.convert_sync_batchnorm(student)
+        teacher = nn.SyncBatchNorm.convert_sync_batchnorm(teacher)
+
+        # We need DDP wrapper to have synchro batch norms working...
+        teacher = nn.parallel.DistributedDataParallel(teacher, device_ids=[rank])
+        teacher_without_ddp = teacher.module
+    else:
+        # Teacher_without_ddp and teacher are the same thing
+        teacher_without_ddp = teacher
+    student = nn.parallel.DistributedDataParallel(student, device_ids=[rank])
+
+    # Teacher and student start with the same weights
+    teacher_without_ddp.load_state_dict(student.module.state_dict())
+    # There is no backpropagation through the teacher, so no need for gradients
+    # This step is to save some memory
+    for param in teacher.parameters():
+        param.requires_grad = False
+
+    model = teacher
+    x = torch.randn(1, 3, 28, 28)
+    x = x.repeat(2, 1, 1, 1).cuda(non_blocking=True)
+    # print(x)
+    print(x.shape)
     y = model(x)
     print(y)
+    print(y[0].shape)
+
+    model = student
+    x = torch.randn(1, 3, 28, 28)
+    x = x.repeat(2, 1, 1, 1).cuda(non_blocking=True)
+    # print(x)
+    print(x.shape)
+    y = model(x)
+    print(y)
+    print(y[0].shape)
 
     return
 
@@ -100,5 +136,5 @@ if __name__ == '__main__':
     # print(int(os.environ['WORLD_SIZE']))
     # print(int(os.environ['LOCAL_RANK']))
 
-    # Launch multi-gpu or distributed training
+    # Launch multi-gpu / distributed training
     helper.launch(main, args)

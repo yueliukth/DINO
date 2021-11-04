@@ -4,9 +4,11 @@ import math
 import numpy as np
 import socket
 import torch
+import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
+
 
 def get_open_port():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -20,11 +22,14 @@ def get_open_port():
 def set_sys_params(params):
     # Set gpu params
     os.environ["CUDA_VISIBLE_DEVICES"] = params['gpu_ids']
-    # Set random seeds for reproducibility
-    seed = params['random_seed'] + get_rank()
+    # Set random seeds for reproducibility TODO: to figure out whether it is necessary to have different random seeds
+    # on different ranks (DeiT uses different seeds) 
+    seed = params['random_seed'] #+ get_rank()
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
+
+    cudnn.benchmark = True
 
 def get_rank():
     if not ddp():
@@ -79,39 +84,4 @@ def print_layers(model):
             names.append(name)
     print(names)
 
-class MultiCropWrapper(nn.Module):
-    """
-    Perform forward pass separately on each resolution input.
-    The inputs corresponding to a single resolution are clubbed and single
-    forward is run on the same resolution inputs. Hence we do several
-    forward passes = number of different resolutions used. We then
-    concatenate all the output features and run the head forward on these
-    concatenated features.
-    """
-    def __init__(self, backbone, head):
-        super(MultiCropWrapper, self).__init__()
-        # disable layers dedicated to ImageNet labels classification
-        backbone.fc, backbone.head = nn.Identity(), nn.Identity()
-        self.backbone = backbone
-        self.head = head
 
-    def forward(self, x):
-        # convert to list
-        if not isinstance(x, list):
-            x = [x]
-        idx_crops = torch.cumsum(torch.unique_consecutive(
-            torch.tensor([inp.shape[-1] for inp in x]),
-            return_counts=True,
-        )[1], 0)
-        start_idx, output = 0, torch.empty(0).to(x[0].device)
-        for end_idx in idx_crops:
-            _out = self.backbone(torch.cat(x[start_idx: end_idx]))
-            # The output is a tuple with XCiT model. See:
-            # https://github.com/facebookresearch/xcit/blob/master/xcit.py#L404-L405
-            if isinstance(_out, tuple):
-                _out = _out[0]
-            # accumulate outputs
-            output = torch.cat((output, _out))
-            start_idx = end_idx
-        # Run the head forward on the concatenated features.
-        return self.head(output)

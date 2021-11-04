@@ -1,16 +1,22 @@
 {
+"dataset_params": {"dataset_name": "FashionMNIST"}, # "ImageNet", "FashionMNIST", "IMAGENETTE"
 "dataloader_params": {"trainloader":{"batch_size": 12,
                                      "num_workers": 6,
                                      "pin_memory": True,
-                                      "drop_last": True},
+                                     "drop_last": True},
                       "valloader": { "batch_size": 12,
                                      "num_workers": 6,
                                      "pin_memory": True,
                                      "drop_last": True}
                       },
-
-"model_params": {"backbone_option":  "vit_tiny", # ['vit_tiny', 'vit_small', 'vit_base', 'resnet50', 'deit_tiny', 'deit_small']
-                 "patch_size": 2,
+"augmentation_params": {"global_crops_scale": [0.4, 1.],
+                        "local_crops_scale": [0.05, 0.4],
+                        "local_crops_number": 8,
+                        "global_size": 224,
+                        "local_size": 96,
+                       },
+"model_params": {"backbone_option":  "vit_tiny", # 'vit_tiny', 'vit_small', 'vit_base', 'resnet50', 'deit_tiny', 'deit_small'
+                 "patch_size": 16,
                  "drop_path_rate": 0.1,
                  "out_dim": 65536, # "Dimensionality of the DINO head output. For complex and large datasets large values (like 65k) work well."
                  "use_bn_in_head": False, # "Whether to use batch normalizations in projection head (Default: False)"
