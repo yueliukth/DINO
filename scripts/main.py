@@ -11,9 +11,12 @@ from torchvision import datasets
 from torchvision.transforms import ToTensor
 from torch.utils.data import DataLoader
 from torchvision import models as torchvision_models
+import torch.nn as nn
 
 import build_models
 import helper
+import vit_models as vits
+from vit_models import DINOHead
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -74,14 +77,15 @@ def train_process(rank, args, start_training=True):
 
     # TODO: Build the student and teacher networks
     print(f"Rank: {rank}. Creating model: {model_params['backbone_option']}", end='\n\n')
-    student, teacher = build_models.get_dino(model_params)
-    # print(teacher,end='\n\n'+'=='*50+'\n\n')
-    # print(student,end='\n\n'+'=='*50+'\n\n')
-
-
-
-
-    # TODO: Set up the training procedure
+    model = build_models.DINO(rank, model_params)
+    # Move the model to gpu
+    model = model.cuda()
+    model= nn.parallel.DistributedDataParallel(model, device_ids=[rank])
+    print(model)
+    
+    x = torch.randn(1, 3, 28, 28).cuda(non_blocking=True)
+    y = model(x)
+    print(y)
 
     return
 

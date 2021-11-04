@@ -12,6 +12,11 @@
 "model_params": {"backbone_option":  "vit_tiny", # ['vit_tiny', 'vit_small', 'vit_base', 'resnet50', 'deit_tiny', 'deit_small']
                  "patch_size": 2,
                  "drop_path_rate": 0.1,
+                 "out_dim": 65536, # "Dimensionality of the DINO head output. For complex and large datasets large values (like 65k) work well."
+                 "use_bn_in_head": False, # "Whether to use batch normalizations in projection head (Default: False)"
+                 "norm_last_layer": False, # "Whether or not to weight normalize the last layer of the DINO head.
+                 # Not normalizing leads to better performance but can make the training unstable.
+                 # In our experiments, we typically set this paramater to False with vit_small and True with vit_base."
                 },
 "system_params": {"num_gpus": 2,
                   "gpu_ids": "0,1",
