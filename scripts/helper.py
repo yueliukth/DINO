@@ -53,7 +53,7 @@ def run_distributed_workers(rank, main_func, world_size, dist_url, args):
 
     torch.cuda.set_device(rank)
     print('| distributed init (rank {}): {}'.format(
-        rank, dist_url), flush=True, end='\n\n'+'=='*50+'\n\n')
+        rank, dist_url), flush=True)
 
     main_func(rank, args)
 
