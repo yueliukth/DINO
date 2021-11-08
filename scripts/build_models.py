@@ -165,7 +165,7 @@ class MultiCropWrapper(nn.Module):
             start_idx = end_idx
         # Run the head forward on the concatenated features.
         head_output = self.head(output)
-        return head_output.chunk(len(x))
+        return head_output
 
 
 

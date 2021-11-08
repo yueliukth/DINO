@@ -1,13 +1,16 @@
 {
+"ckpt_params": { "output_dir": "/storage/yue/dino_models/test/",
+                 "restore_epoch": 0,
+               },
 "dataset_params": { "dataset_name": "ImageNet", # "ImageNet", "FashionMNIST", "IMAGENETTE"
                     "data_folder": "/storage/yue/data/",
                   },
-"dataloader_params": {"trainloader":{"batch_size": 36,
-                                     "num_workers": 6,
+"dataloader_params": {"trainloader":{"batch_size": 6,
+                                     "num_workers": 2,
                                      "pin_memory": True,
                                      "drop_last": True},
-                      "valloader": { "batch_size": 36,
-                                     "num_workers": 6,
+                      "valloader": { "batch_size": 6,
+                                     "num_workers": 2,
                                      "pin_memory": True,
                                      "drop_last": True}
                      },
@@ -26,7 +29,11 @@
                  # Not normalizing leads to better performance but can make the training unstable.
                  # In our experiments, we typically set this paramater to False with vit_small and True with vit_base."
                 },
+"optimizer_params": {"num_epochs":100,
+
+                    },
 "system_params": {"num_gpus": 2,
                   "gpu_ids": "0,1",
-                  "random_seed": 6111},
+                  "random_seed": 6111,
+                  "use_fp16": True},
                  }
