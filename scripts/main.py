@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from torchvision import models as torchvision_models
 import torch.nn as nn
 import torch.distributed as dist
+from torchvision import datasets, transforms
 
 import helper
 import augmentations
@@ -54,34 +55,51 @@ def train_process(rank, args, start_training=True):
     # ============ preparing data ... ============
     # Set up data loader with augmentations
     # Load an example Dataset with augmentations
-    transforms = augmentations.DataAugmentationDINO(
+    transforms_aug = augmentations.DataAugmentationDINO(
         augmentation_params['global_crops_scale'],
         augmentation_params['local_crops_scale'],
         augmentation_params['local_crops_number'],
         augmentation_params['global_size'],
         augmentation_params['local_size']
     )
+    transforms_plain = transforms_aug.transforms_plain
+    
     start = time.time()
-    train_dataset = build_datasets.get_datasets(dataset_params, 'train/', transforms)
-    # val_dataset = build_datasets.get_datasets(dataset_params, 'val/', transforms)
-    print(f' Building the datasets took {time.time() - start} seconds')
-    print()
-    print(f"Rank: {rank}. Data loaded: there are {len(train_dataset)} train images. ")
-    # print(f"Rank: {rank}. Data loaded: there are {len(val_dataset)} val images. ", end='\n\n')
+    # The aug_dataset is for training, while plain_datasets is mostly used to compute knn and visualize the embeddings
+    train_aug_dataset = build_datasets.get_datasets(dataset_params, 'train/', transforms_aug)
+    train_plain_dataset = build_datasets.get_datasets(dataset_params, 'train/', transforms_plain)
+    val_plain_dataset = build_datasets.get_datasets(dataset_params, 'val/', transforms_plain)
+
+    if train_plain_dataset.classes != val_plain_dataset.classes:
+        raise ValueError("Inconsistent classes in train and val.")
+    
+    if rank == system_params['num_gpus']-1:
+        print(f"On each rank, data loaded: there are {len(train_aug_dataset)} train images. ")
+        print(f"On each rank, data loaded: there are {len(train_plain_dataset)} train images. ")
+        print(f"On each rank, data loaded: there are {len(val_plain_dataset)} val images. ")
+
+        print(f'Building the train_aug_dataset, train_plain_dataset and val_plain_dataset took {time.time() - start} seconds')
+        print()
 
     # Set sampler that restricts data loading to a subset of the dataset
     # In conjunction with torch.nn.parallel.DistributedDataParallel
-    train_sampler = torch.utils.data.DistributedSampler(train_dataset, shuffle=True)
-    # val_sampler = torch.utils.data.DistributedSampler(val_dataset, shuffle=True)
+    train_aug_sampler = torch.utils.data.DistributedSampler(train_aug_dataset, shuffle=True)
+    train_plain_sampler = torch.utils.data.DistributedSampler(train_plain_dataset, shuffle=True)
+    val_plain_sampler = torch.utils.data.DistributedSampler(val_plain_dataset, shuffle=True)
 
     # Prepare the data for training with DataLoaders
     # pin_memory makes transferring images from CPU to GPU faster
-    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=int(trainloader_params['batch_size']/system_params['num_gpus']),
+    train_aug_dataloader = DataLoader(train_aug_dataset, sampler=train_aug_sampler, batch_size=int(trainloader_params['batch_size']/system_params['num_gpus']),
                                   num_workers=trainloader_params['num_workers'], pin_memory=trainloader_params['pin_memory'], drop_last=trainloader_params['drop_last'])
-    # val_dataloader = DataLoader(val_dataset, sampler=val_sampler, batch_size=int(valloader_params['batch_size']/system_params['num_gpus']),
-    #                             num_workers=valloader_params['num_workers'], pin_memory=valloader_params['pin_memory'], drop_last=valloader_params['drop_last'])
-    print(f"Rank: {rank}. Data loaded: there are {len(train_dataloader)} train_dataloaders. ")
-    # print(f"Rank: {rank}. Data loaded: there are {len(val_dataloader)} val_dataloaders. ", end='\n\n')
+    train_plain_dataloader = DataLoader(train_plain_dataset, sampler=train_plain_sampler, batch_size=int(trainloader_params['batch_size']/system_params['num_gpus']),
+                                      num_workers=trainloader_params['num_workers'], pin_memory=trainloader_params['pin_memory'], drop_last=trainloader_params['drop_last'])
+    val_plain_dataloader = DataLoader(val_plain_dataset, sampler=val_plain_sampler, batch_size=int(valloader_params['batch_size']/system_params['num_gpus']),
+                                        num_workers=valloader_params['num_workers'], pin_memory=valloader_params['pin_memory'], drop_last=valloader_params['drop_last'])
+
+    if rank == system_params['num_gpus']-1:
+        print(f"On each rank, data loaded: there are {len(train_aug_dataloader)} train_dataloaders. ")
+        print(f"On each rank, data loaded: there are {len(train_plain_dataloader)} train_plain_dataloader. ")
+        print(f"On each rank, data loaded: there are {len(val_plain_dataloader)} val_plain_dataloader. ", end='\n\n')
 
     # ============ building student and teacher networks ... ============
     print(f"Rank: {rank}. Creating model: {model_params['backbone_option']}", end='\n\n')
@@ -113,6 +131,10 @@ def train_process(rank, args, start_training=True):
     # This step is to save some memory
     for param in teacher.parameters():
         param.requires_grad = False
+
+    # ============ preparing loss ... ============
+
+
 
     # model = teacher
     # x = torch.randn(1, 3, 28, 28)

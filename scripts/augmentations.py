@@ -76,6 +76,14 @@ class DataAugmentationDINO(object):
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
         ])
 
+        self.transforms_plain = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+                transforms.Resize((global_size, global_size)),
+            ]
+        )
+
         # first global crop
         self.global_transforms1 = transforms.Compose([
             transforms.RandomResizedCrop(global_size, scale=global_crops_scale, interpolation=Image.BICUBIC),

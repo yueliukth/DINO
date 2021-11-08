@@ -2,11 +2,11 @@
 "dataset_params": { "dataset_name": "ImageNet", # "ImageNet", "FashionMNIST", "IMAGENETTE"
                     "data_folder": "/storage/yue/data/",
                   },
-"dataloader_params": {"trainloader":{"batch_size": 6,
+"dataloader_params": {"trainloader":{"batch_size": 36,
                                      "num_workers": 6,
                                      "pin_memory": True,
                                      "drop_last": True},
-                      "valloader": { "batch_size": 6,
+                      "valloader": { "batch_size": 36,
                                      "num_workers": 6,
                                      "pin_memory": True,
                                      "drop_last": True}
