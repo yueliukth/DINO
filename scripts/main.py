@@ -20,6 +20,7 @@ import prepare_augmentations
 import prepare_models
 import prepare_datasets
 import prepare_losses
+import prepare_trainers
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -99,6 +100,10 @@ def train_process(rank, args, start_training=True):
                                       num_workers=trainloader_params['num_workers'], pin_memory=trainloader_params['pin_memory'], drop_last=trainloader_params['drop_last'])
     val_plain_dataloader = DataLoader(val_plain_dataset, sampler=val_plain_sampler, batch_size=int(valloader_params['batch_size']/system_params['num_gpus']),
                                         num_workers=valloader_params['num_workers'], pin_memory=valloader_params['pin_memory'], drop_last=valloader_params['drop_last'])
+
+    # # Tensorboard Summarywriter for logging
+    # writer = SummaryWriter(ckpt_params['output_dir'])
+    # writer.add_text("Configuration", json.dumps(args))
 
     if rank == system_params['num_gpus']-1:
         print(f"On each rank: there are {len(train_aug_dataloader)} train_dataloaders. ")
@@ -213,31 +218,12 @@ def train_process(rank, args, start_training=True):
         val_plain_dataloader.sampler.set_epoch(epoch)
 
         # ============ training one epoch of DINO ... ============
-        metric_logger = helper.MetricLogger(delimiter="  ")
-        header = 'Epoch: [{}/{}]'.format(epoch, training_params['num_epochs'])
-        for it, (images, _) in enumerate(metric_logger.log_every(iterable=train_aug_dataloader, print_freq=10, header=header)):
-
-            images = [im.cuda(non_blocking=True) for im in images]
-            # teacher and student forward passes + compute dino loss
-            with torch.cuda.amp.autocast(fp16_scaler is not None):
-                teacher_output = teacher(images[:2])  # only the 2 global views pass through the teacher
-                student_output = student(images)
-                print(len(teacher_output))
-                # Each rank has size of teacher and student outputs: torch.Size([BATCH_SIZE/NUM_GPUS*NUM_GLOBAL_CROPS, OUT_DIM]), torch.Size([BATCH_SIZE/NUM_GPUS*NUM_ALL_CROPS, OUT_DIM])
-         
-         
-            
-        optimizer.zero_grad() 
-        train_loss = dino_loss.forward(student_output, teacher_output, epoch)
-        train_loss.backward() #retain_graph=True
-        # student update
-        optimizer.step()
-        # teacher update
-        teacher.parameters() = momentum_schedule[epoch]*teacher.parameters() + (1-momentum_schedule[epoch])*student.parameters() 
-        
-        
-
-
+        num_epochs = training_params['num_epochs']
+        clip_grad = training_params['clip_grad']
+        freeze_last_layer = training_params['freeze_last_layer']
+        prepare_trainers.train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, train_aug_dataloader,
+                        optimizer, lr_schedule, wd_schedule, momentum_schedule, epoch, num_epochs, clip_grad, freeze_last_layer,
+                        fp16_scaler)
 
     # model = teacher
     # x = torch.randn(1, 3, 28, 28)
@@ -269,3 +255,5 @@ if __name__ == '__main__':
 
     # Launch multi-gpu / distributed training
     helper.launch(main, args)
+
+    

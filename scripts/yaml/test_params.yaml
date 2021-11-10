@@ -45,6 +45,8 @@
                           "final_wd": 0.4},
                     "momentum": {"base_momentum_teacher": 0.996,
                                  "final_momentum_teacher": 1},
+                    "clip_grad": 3.0,
+                    "freeze_last_layer": 1,
                     },
 "system_params": {"num_gpus": 2,
                   "gpu_ids": "0,1",

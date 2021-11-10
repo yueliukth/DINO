@@ -50,13 +50,13 @@ class DINOLoss(nn.Module):
         loss : torch.Tensor
             Scalar representing the average loss.
         """
-        student_output = student_output.chunk(self.ncrops)
-        student_temp = [s / self.student_temp for s in student_output]
+        student_out = student_output.chunk(self.num_crops)
+        student_temp = [s / self.student_temp for s in student_out]
 
         # Teacher centering and sharpening
-        teacher_output = teacher_output.chunk(2)
+        teacher_out = teacher_output.chunk(2)
         temp = self.teacher_temp_schedule[epoch]
-        teacher_temp = [(t - self.center) / temp for t in teacher_output]
+        teacher_temp = [(t - self.center) / temp for t in teacher_out]
 
         student_softmax = [F.log_softmax(s, dim=-1) for s in student_temp]
         teacher_softmax = [F.softmax(t, dim=-1).detach() for t in teacher_temp]
