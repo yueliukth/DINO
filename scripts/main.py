@@ -224,7 +224,18 @@ def train_process(rank, args, start_training=True):
                 student_output = student(images)
                 print(len(teacher_output))
                 # Each rank has size of teacher and student outputs: torch.Size([BATCH_SIZE/NUM_GPUS*NUM_GLOBAL_CROPS, OUT_DIM]), torch.Size([BATCH_SIZE/NUM_GPUS*NUM_ALL_CROPS, OUT_DIM])
-
+         
+         
+            
+        optimizer.zero_grad() 
+        train_loss = dino_loss.forward(student_output, teacher_output, epoch)
+        train_loss.backward() #retain_graph=True
+        # student update
+        optimizer.step()
+        # teacher update
+        teacher.parameters() = momentum_schedule[epoch]*teacher.parameters() + (1-momentum_schedule[epoch])*student.parameters() 
+        
+        
 
 
 
