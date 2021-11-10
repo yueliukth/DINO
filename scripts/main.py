@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import yaml
+import json
 import time
 import argparse
 import numpy as np
@@ -14,6 +15,7 @@ from torchvision import models as torchvision_models
 import torch.nn as nn
 import torch.distributed as dist
 from torchvision import datasets, transforms
+from torch.utils.tensorboard import SummaryWriter
 
 import helper
 import prepare_augmentations
@@ -101,9 +103,11 @@ def train_process(rank, args, start_training=True):
     val_plain_dataloader = DataLoader(val_plain_dataset, sampler=val_plain_sampler, batch_size=int(valloader_params['batch_size']/system_params['num_gpus']),
                                         num_workers=valloader_params['num_workers'], pin_memory=valloader_params['pin_memory'], drop_last=valloader_params['drop_last'])
 
-    # # Tensorboard Summarywriter for logging
-    # writer = SummaryWriter(ckpt_params['output_dir'])
-    # writer.add_text("Configuration", json.dumps(args))
+    # Tensorboard Summarywriter for logging
+    if not os.path.exists(ckpt_params['output_dir']):
+        os.makedirs(ckpt_params['output_dir'])
+    writer = SummaryWriter(ckpt_params['output_dir'])
+    writer.add_text("Configuration", json.dumps(args))
 
     if rank == system_params['num_gpus']-1:
         print(f"On each rank: there are {len(train_aug_dataloader)} train_dataloaders. ")
@@ -221,9 +225,10 @@ def train_process(rank, args, start_training=True):
         num_epochs = training_params['num_epochs']
         clip_grad = training_params['clip_grad']
         freeze_last_layer = training_params['freeze_last_layer']
-        prepare_trainers.train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, train_aug_dataloader,
-                        optimizer, lr_schedule, wd_schedule, momentum_schedule, epoch, num_epochs, clip_grad, freeze_last_layer,
-                        fp16_scaler)
+        if start_training:
+            prepare_trainers.train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, train_aug_dataloader,
+                            optimizer, lr_schedule, wd_schedule, momentum_schedule, epoch, num_epochs, clip_grad, freeze_last_layer,
+                            fp16_scaler)
 
     # model = teacher
     # x = torch.randn(1, 3, 28, 28)
@@ -247,7 +252,7 @@ def train_process(rank, args, start_training=True):
 
 def main(rank, args):
     # Set up training
-    train_process(rank, args, start_training=True)
+    train_process(rank, args, start_training=None)
 
 if __name__ == '__main__':
     # Read params and print them
@@ -256,4 +261,3 @@ if __name__ == '__main__':
     # Launch multi-gpu / distributed training
     helper.launch(main, args)
 
-    

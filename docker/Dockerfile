@@ -82,6 +82,7 @@ RUN conda install -c conda-forge scikit-image
 RUN conda install -c fastchan fastai
 RUN pip install kaggle
 RUN conda install -c conda-forge ipywidgets
+RUN pip install tensorboard
 
 USER root
 RUN apt-get update -y
