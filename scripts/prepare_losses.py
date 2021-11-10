@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,7 +6,7 @@ import torch.distributed as dist
 
 class DINOLoss(nn.Module):
     """The loss function.
-    We subclass the `nn.Module` becuase we want to create a buffer for the
+    We subclass the `nn.Module` because we want to create a buffer for the
     logits center of the teacher.
     Parameters
     ----------
@@ -17,7 +18,7 @@ class DINOLoss(nn.Module):
         Hyperparameter for the exponential moving average that determines
         the center logits. The higher the more the running average matters.
     """
-    def __init__(self, out_dim, warmup_teacher_temp, teacher_temp, warmup_teacher_temp_epochs,
+    def __init__(self, out_dim, num_crops, warmup_teacher_temp, teacher_temp, warmup_teacher_temp_epochs,
                  num_epochs, student_temp=0.1, center_momentum=0.9):
         super().__init__()
         self.num_crops = num_crops

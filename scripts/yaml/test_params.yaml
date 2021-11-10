@@ -29,7 +29,25 @@
                  # Not normalizing leads to better performance but can make the training unstable.
                  # In our experiments, we typically set this paramater to False with vit_small and True with vit_base."
                 },
-"optimizer_params": {"num_epochs":100,
+"training_params": {"num_epochs":100,
+                    "warmup_teacher_temp": 0.04,
+                    "teacher_temp": 0.04,
+                    "warmup_teacher_temp_epochs": 0,
+                    "student_temp": 0.1,
+                    "center_momentum": 0.9,
+                    "optimizer": {"name": "sgd",
+                                  "sgd": { "lr": 0, "momentum": 0.9}},
+                    "lr":{"base_lr": 0.0005,
+                          "final_lr": 0.000001,
+                          "warmup_epochs": 10,
+                          "start_warmup_lr": 0},
+                    "wd":{"base_wd": 0.04,
+                          "final_wd": 0.4},
+                    "momentum": {"base_momentum_teacher": 0.996,
+                                 "final_momentum_teacher": 1},
+
+
+
 
                     },
 "system_params": {"num_gpus": 2,

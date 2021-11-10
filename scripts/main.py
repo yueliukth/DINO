@@ -16,10 +16,10 @@ import torch.distributed as dist
 from torchvision import datasets, transforms
 
 import helper
-import build_augmentations
-import build_models
-import build_datasets
-import build_losses
+import prepare_augmentations
+import prepare_models
+import prepare_datasets
+import prepare_losses
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -48,7 +48,7 @@ def train_process(rank, args, start_training=True):
     dataloader_params = args['dataloader_params']
     model_params = args['model_params']
     augmentation_params = args['augmentation_params']
-    optimizer_params = args['optimizer_params']
+    training_params = args['training_params']
 
     trainloader_params = dataloader_params['trainloader']
     valloader_params = dataloader_params['valloader']
@@ -59,7 +59,7 @@ def train_process(rank, args, start_training=True):
     # ============ preparing data ... ============
     # Set up data loader with augmentations
     # Load an example Dataset with augmentations
-    transforms_aug = build_augmentations.DataAugmentationDINO(
+    transforms_aug = prepare_augmentations.DataAugmentationDINO(
         augmentation_params['global_crops_scale'],
         augmentation_params['local_crops_scale'],
         augmentation_params['local_crops_number'],
@@ -70,17 +70,17 @@ def train_process(rank, args, start_training=True):
     
     start = time.time()
     # The aug_dataset is for training, while plain_datasets is mostly used to compute knn and visualize the embeddings
-    train_aug_dataset = build_datasets.get_datasets(dataset_params, 'train/', transforms_aug)
-    train_plain_dataset = build_datasets.get_datasets(dataset_params, 'train/', transforms_plain)
-    val_plain_dataset = build_datasets.get_datasets(dataset_params, 'val/', transforms_plain)
+    train_aug_dataset = prepare_datasets.get_datasets(dataset_params, 'train/', transforms_aug)
+    train_plain_dataset = prepare_datasets.get_datasets(dataset_params, 'train/', transforms_plain)
+    val_plain_dataset = prepare_datasets.get_datasets(dataset_params, 'val/', transforms_plain)
 
     if train_plain_dataset.classes != val_plain_dataset.classes:
         raise ValueError("Inconsistent classes in train and val.")
 
     if rank == system_params['num_gpus']-1:
-        print(f"On each rank, data loaded: there are {len(train_aug_dataset)} train images. ")
-        print(f"On each rank, data loaded: there are {len(train_plain_dataset)} train images. ")
-        print(f"On each rank, data loaded: there are {len(val_plain_dataset)} val images. ")
+        print(f"On each rank: there are {len(train_aug_dataset)} train images. ")
+        print(f"On each rank: there are {len(train_plain_dataset)} train images. ")
+        print(f"On each rank: there are {len(val_plain_dataset)} val images. ")
 
         print(f'Building the train_aug_dataset, train_plain_dataset and val_plain_dataset took {time.time() - start} seconds')
         print()
@@ -101,16 +101,16 @@ def train_process(rank, args, start_training=True):
                                         num_workers=valloader_params['num_workers'], pin_memory=valloader_params['pin_memory'], drop_last=valloader_params['drop_last'])
 
     if rank == system_params['num_gpus']-1:
-        print(f"On each rank, data loaded: there are {len(train_aug_dataloader)} train_dataloaders. ")
-        print(f"On each rank, data loaded: there are {len(train_plain_dataloader)} train_plain_dataloader. ")
-        print(f"On each rank, data loaded: there are {len(val_plain_dataloader)} val_plain_dataloader. ", end='\n\n')
+        print(f"On each rank: there are {len(train_aug_dataloader)} train_dataloaders. ")
+        print(f"On each rank: there are {len(train_plain_dataloader)} train_plain_dataloader. ")
+        print(f"On each rank: there are {len(val_plain_dataloader)} val_plain_dataloader. ", end='\n\n')
 
     # ============ building student and teacher networks ... ============
     print(f"Rank: {rank}. Creating model: {model_params['backbone_option']}", end='\n\n')
-    student_backbone, student_head, teacher_backbone, teacher_head = build_models.build_dino(model_params)
+    student_backbone, student_head, teacher_backbone, teacher_head = prepare_models.build_dino(model_params)
 
-    student = build_models.MultiCropWrapper(student_backbone, student_head)
-    teacher = build_models.MultiCropWrapper(teacher_backbone, teacher_head)
+    student = prepare_models.MultiCropWrapper(student_backbone, student_head)
+    teacher = prepare_models.MultiCropWrapper(teacher_backbone, teacher_head)
 
     # Move networks to gpu
     # This step is necessary for DDP later
@@ -137,48 +137,91 @@ def train_process(rank, args, start_training=True):
         param.requires_grad = False
 
     # ============ preparing loss ... ============
+    # Move dino_loss to gpu
+    dino_loss = prepare_losses.DINOLoss(
+        out_dim=model_params['out_dim'],
+        num_crops=augmentation_params['local_crops_number']+2,
+        warmup_teacher_temp=training_params['warmup_teacher_temp'],
+        teacher_temp=training_params['teacher_temp'],
+        warmup_teacher_temp_epochs=training_params['warmup_teacher_temp_epochs'],
+        num_epochs=training_params['num_epochs'],
+        student_temp=training_params['student_temp'],
+        center_momentum=training_params['center_momentum']).cuda()
 
-
-
-    # Mixed precision training
+    # ============ preparing optimizer ... ============
+    params_dict = helper.get_params_groups(student)
+    if training_params['optimizer']['name'] == "adamw":
+        optimizer = torch.optim.AdamW(params_dict)  # to use with ViTs
+    elif training_params['optimizer']['name'] == "sgd":
+        optimizer = torch.optim.SGD(params_dict, lr=training_params['optimizer']['sgd']['lr'], momentum=training_params['optimizer']['sgd']['momentum'])  # lr is set by scheduler
+    elif training_params['optimizer']['name'] == "lars":
+        optimizer = utils.LARS(params_dict)  # to use with convnet and large batches
+    # For mixed precision training
+    # Each parameter’s gradient (.grad attribute) should be unscaled before the optimizer updates the parameters,
+    # so the scale factor does not interfere with the learning rate.
     fp16_scaler = None
     if system_params['use_fp16']:
         fp16_scaler = torch.cuda.amp.GradScaler()
 
-    # ============ start training ... ============
-    # ============ optionally resume training ... ============
-    to_restore = {'epoch': ckpt_params['restore_epoch']}
-    # jelper.restart_from_checkpoint(
-    #     os.path.join(ckpt_params['output_dir'], "checkpoint.pth"),
-    #     run_variables=to_restore,
-    #     student=student,
-    #     teacher=teacher,
-    #     optimizer=optimizer,
-    #     fp16_scaler=fp16_scaler,
-    #     dino_loss=dino_loss,
-    # )
+    # ============ init schedulers ... ============
+    lr_schedule = helper.cosine_scheduler(
+        base_value=training_params['lr']['base_lr'] * trainloader_params['batch_size'] / 256.,  # linear scaling rule according to the paper below
+                                                                                          # "Accurate, large minibatch sgd: Training imagenet in 1 hour."
+        final_value=training_params['lr']['final_lr'],
+        epochs=training_params['num_epochs'],
+        niter_per_ep=len(train_aug_dataset),
+        warmup_epochs=training_params['lr']['warmup_epochs'],
+        start_warmup_value=training_params['lr']['start_warmup_lr'],
+        )
+    wd_schedule = helper.cosine_scheduler(
+        base_value=training_params['wd']['base_wd'],
+        final_value=training_params['wd']['final_wd'],
+        epochs=training_params['num_epochs'],
+        niter_per_ep=len(train_aug_dataset),
+    )
+    # Momentum parameter is increased to 1. during training with a cosine schedule
+    momentum_schedule = helper.cosine_scheduler(base_value=training_params['momentum']['base_momentum_teacher'],
+                                                final_value=training_params['momentum']['final_momentum_teacher'],
+                                                epochs=training_params['num_epochs'],
+                                                niter_per_ep=len(train_aug_dataset))
+    if rank == system_params['num_gpus']-1:
+        print(f"Loss, optimizer and schedulers ready.")
 
-    start_epoch = to_restore['epoch']
-    start_time = time.time()
-    print("Starting DINO training !")
-    for epoch in range(start_epoch, optimizer_params['num_epochs']):
-        train_aug_dataloader.sampler.set_epoch(epoch)
-        train_plain_dataloader.sampler.set_epoch(epoch)
-        val_plain_dataloader.sampler.set_epoch(epoch)
-
-        # Train one epoch of DINO
-        metric_logger = helper.MetricLogger(delimiter="  ")
-        header = 'Epoch: [{}/{}]'.format(epoch,optimizer_params['num_epochs'])
-        for it, (images, _) in enumerate(metric_logger.log_every(train_aug_dataloader, 10, header)):
-
-            images = [im.cuda(non_blocking=True) for im in images]
-            # teacher and student forward passes + compute dino loss
-            with torch.cuda.amp.autocast(fp16_scaler is not None):
-                teacher_output = teacher(images[:2])  # only the 2 global views pass through the teacher
-                student_output = student(images)
-                print(len(teacher_output))
-                # Each rank has size of teacher and student outputs: torch.Size([BATCH_SIZE/NUM_GPUS*NUM_GLOBAL_CROPS, OUT_DIM]), torch.Size([BATCH_SIZE/NUM_GPUS*NUM_ALL_CROPS, OUT_DIM])
-
+    #
+    # # ============ start training ... ============
+    # # ============ optionally resume training ... ============
+    # to_restore = {'epoch': ckpt_params['restore_epoch']}
+    # # jelper.restart_from_checkpoint(
+    # #     os.path.join(ckpt_params['output_dir'], "checkpoint.pth"),
+    # #     run_variables=to_restore,
+    # #     student=student,
+    # #     teacher=teacher,
+    # #     optimizer=optimizer,
+    # #     fp16_scaler=fp16_scaler,
+    # #     dino_loss=dino_loss,
+    # # )
+    #
+    # start_epoch = to_restore['epoch']
+    # start_time = time.time()
+    # print("Starting DINO training !")
+    # for epoch in range(start_epoch, training_params['num_epochs']):
+    #     train_aug_dataloader.sampler.set_epoch(epoch)
+    #     train_plain_dataloader.sampler.set_epoch(epoch)
+    #     val_plain_dataloader.sampler.set_epoch(epoch)
+    #
+    #     # Train one epoch of DINO
+    #     metric_logger = helper.MetricLogger(delimiter="  ")
+    #     header = 'Epoch: [{}/{}]'.format(epoch, training_params['num_epochs'])
+    #     for it, (images, _) in enumerate(metric_logger.log_every(train_aug_dataloader, 10, header)):
+    #
+    #         images = [im.cuda(non_blocking=True) for im in images]
+    #         # teacher and student forward passes + compute dino loss
+    #         with torch.cuda.amp.autocast(fp16_scaler is not None):
+    #             teacher_output = teacher(images[:2])  # only the 2 global views pass through the teacher
+    #             student_output = student(images)
+    #             print(len(teacher_output))
+    #             # Each rank has size of teacher and student outputs: torch.Size([BATCH_SIZE/NUM_GPUS*NUM_GLOBAL_CROPS, OUT_DIM]), torch.Size([BATCH_SIZE/NUM_GPUS*NUM_ALL_CROPS, OUT_DIM])
+    #
 
 
 
@@ -209,9 +252,6 @@ def main(rank, args):
 if __name__ == '__main__':
     # Read params and print them
     args = parse_args(params_path='yaml/test_params.yaml')
-    # print(int(os.environ["RANK"]))
-    # print(int(os.environ['WORLD_SIZE']))
-    # print(int(os.environ['LOCAL_RANK']))
 
     # Launch multi-gpu / distributed training
     helper.launch(main, args)
