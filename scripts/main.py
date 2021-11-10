@@ -187,41 +187,44 @@ def train_process(rank, args, start_training=True):
     if rank == system_params['num_gpus']-1:
         print(f"Loss, optimizer and schedulers ready.")
 
-    #
-    # # ============ start training ... ============
-    # # ============ optionally resume training ... ============
-    # to_restore = {'epoch': ckpt_params['restore_epoch']}
-    # # jelper.restart_from_checkpoint(
-    # #     os.path.join(ckpt_params['output_dir'], "checkpoint.pth"),
-    # #     run_variables=to_restore,
-    # #     student=student,
-    # #     teacher=teacher,
-    # #     optimizer=optimizer,
-    # #     fp16_scaler=fp16_scaler,
-    # #     dino_loss=dino_loss,
-    # # )
-    #
-    # start_epoch = to_restore['epoch']
-    # start_time = time.time()
-    # print("Starting DINO training !")
-    # for epoch in range(start_epoch, training_params['num_epochs']):
-    #     train_aug_dataloader.sampler.set_epoch(epoch)
-    #     train_plain_dataloader.sampler.set_epoch(epoch)
-    #     val_plain_dataloader.sampler.set_epoch(epoch)
-    #
-    #     # Train one epoch of DINO
-    #     metric_logger = helper.MetricLogger(delimiter="  ")
-    #     header = 'Epoch: [{}/{}]'.format(epoch, training_params['num_epochs'])
-    #     for it, (images, _) in enumerate(metric_logger.log_every(train_aug_dataloader, 10, header)):
-    #
-    #         images = [im.cuda(non_blocking=True) for im in images]
-    #         # teacher and student forward passes + compute dino loss
-    #         with torch.cuda.amp.autocast(fp16_scaler is not None):
-    #             teacher_output = teacher(images[:2])  # only the 2 global views pass through the teacher
-    #             student_output = student(images)
-    #             print(len(teacher_output))
-    #             # Each rank has size of teacher and student outputs: torch.Size([BATCH_SIZE/NUM_GPUS*NUM_GLOBAL_CROPS, OUT_DIM]), torch.Size([BATCH_SIZE/NUM_GPUS*NUM_ALL_CROPS, OUT_DIM])
-    #
+
+    # ============ start the training process ... ============
+    # ============ optionally resume training ... ============
+    to_restore = {'epoch': ckpt_params['restore_epoch']}
+    helper.restart_from_checkpoint(
+        os.path.join(ckpt_params['output_dir'], "checkpoint.pth"),
+        run_variables=to_restore,
+        student=student,
+        teacher=teacher,
+        optimizer=optimizer,
+        fp16_scaler=fp16_scaler,
+        dino_loss=dino_loss,
+    )
+
+    start_time = time.time()
+    print("Starting DINO training !")
+    for epoch in range(to_restore['epoch'], training_params['num_epochs']):
+        # In distributed mode, calling the :meth:`set_epoch` method at
+        # the beginning of each epoch **before** creating the :class:`DataLoader` iterator
+        # is necessary to make shuffling work properly across multiple epochs. Otherwise,
+        # the same ordering will be always used.
+        train_aug_dataloader.sampler.set_epoch(epoch)
+        train_plain_dataloader.sampler.set_epoch(epoch)
+        val_plain_dataloader.sampler.set_epoch(epoch)
+
+        # ============ training one epoch of DINO ... ============
+        metric_logger = helper.MetricLogger(delimiter="  ")
+        header = 'Epoch: [{}/{}]'.format(epoch, training_params['num_epochs'])
+        for it, (images, _) in enumerate(metric_logger.log_every(iterable=train_aug_dataloader, print_freq=10, header=header)):
+
+            images = [im.cuda(non_blocking=True) for im in images]
+            # teacher and student forward passes + compute dino loss
+            with torch.cuda.amp.autocast(fp16_scaler is not None):
+                teacher_output = teacher(images[:2])  # only the 2 global views pass through the teacher
+                student_output = student(images)
+                print(len(teacher_output))
+                # Each rank has size of teacher and student outputs: torch.Size([BATCH_SIZE/NUM_GPUS*NUM_GLOBAL_CROPS, OUT_DIM]), torch.Size([BATCH_SIZE/NUM_GPUS*NUM_ALL_CROPS, OUT_DIM])
+
 
 
 
