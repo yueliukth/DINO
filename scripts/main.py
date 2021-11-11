@@ -1,11 +1,13 @@
 import os
 import sys
 import time
+import datetime
 import yaml
 import json
 import time
 import argparse
 import numpy as np
+from pathlib import Path
 
 import torch
 from torch.utils.data import Dataset
@@ -18,7 +20,7 @@ from torchvision import datasets, transforms
 from torch.utils.tensorboard import SummaryWriter
 
 import helper
-import prepare_augmentations
+import evaluation
 import prepare_models
 import prepare_datasets
 import prepare_losses
@@ -39,12 +41,11 @@ def parse_args(params_path=None):
     
     print(end='\n\n'+'=='*50+'\n\n')
     print('ARGS ARE: ')
-    print(args, end='\n\n'+'=='*50+'\n\n')
+    print(json.dumps(args, indent=4))
     return args
 
 def train_process(rank, args, start_training=True):
-    print(f'Rank: {rank}. Start preparing for training ')
-
+    # Define some parameters for easy access
     ckpt_params = args['ckpt_params']
     dataset_params = args['dataset_params']
     system_params = args['system_params']
@@ -52,47 +53,54 @@ def train_process(rank, args, start_training=True):
     model_params = args['model_params']
     augmentation_params = args['augmentation_params']
     training_params = args['training_params']
-
     trainloader_params = dataloader_params['trainloader']
     valloader_params = dataloader_params['valloader']
 
+    # ============ Preparing system configuration ... ============
     # Set gpu params and random seeds for reproducibility
     helper.set_sys_params(system_params)
+    # Tensorboard Summarywriter for logging
+    # Log network input arg in Tensorboard
+    tensorboard_path = os.path.join(ckpt_params['output_dir'], 'tensorboard/')
+    if not os.path.exists(tensorboard_path):
+        os.makedirs(tensorboard_path)
+    writer = SummaryWriter(tensorboard_path)
+    if helper.is_main_process():
+        writer.add_text("Configuration", json.dumps(args, indent=4))
 
-    # ============ preparing data ... ============
-    # Set up data loader with augmentations
-    # Load an example Dataset with augmentations
-    transforms_aug = prepare_augmentations.DataAugmentationDINO(
+    # ============ Preparing data ... ============
+    # Define transformations applied on augmented and plain data
+    # The aug_dataset is for training, while plain_datasets is mostly used to compute knn and visualize the embeddings
+    transforms_aug = prepare_datasets.DataAugmentationDINO(
+        dataset_params['n_chnl'],
         augmentation_params['global_crops_scale'],
         augmentation_params['local_crops_scale'],
         augmentation_params['local_crops_number'],
         augmentation_params['global_size'],
-        augmentation_params['local_size']
-    )
+        augmentation_params['local_size'])
     transforms_plain = transforms_aug.transforms_plain
-    
-    start = time.time()
-    # The aug_dataset is for training, while plain_datasets is mostly used to compute knn and visualize the embeddings
-    train_aug_dataset = prepare_datasets.get_datasets(dataset_params, 'train/', transforms_aug)
-    train_plain_dataset = prepare_datasets.get_datasets(dataset_params, 'train/', transforms_plain)
-    val_plain_dataset = prepare_datasets.get_datasets(dataset_params, 'val/', transforms_plain)
 
+    start_time = time.time()
+    label_mapping = prepare_datasets.GetDatasets(dataset_params).label_mapping
+    train_aug_dataset = prepare_datasets.GetDatasets(dataset_params).get_datasets('train/', transforms_aug)
+    train_plain_dataset = prepare_datasets.GetDatasets(dataset_params).get_datasets( 'train/', transforms_plain)
+    val_plain_dataset = prepare_datasets.GetDatasets(dataset_params).get_datasets('val/', transforms_plain)
+    indices = np.arange(len(val_plain_dataset))
+    np.random.shuffle(indices)
+    val_plain_subset_dataset = torch.utils.data.Subset(val_plain_dataset, indices[:50])
     if train_plain_dataset.classes != val_plain_dataset.classes:
         raise ValueError("Inconsistent classes in train and val.")
-
-    if rank == system_params['num_gpus']-1:
-        print(f"On each rank: there are {len(train_aug_dataset)} train images. ")
-        print(f"On each rank: there are {len(train_plain_dataset)} train images. ")
-        print(f"On each rank: there are {len(val_plain_dataset)} val images. ")
-
-        print(f'Building the train_aug_dataset, train_plain_dataset and val_plain_dataset took {time.time() - start} seconds')
-        print()
+    if helper.is_main_process():
+        total_time = time.time() - start_time
+        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+        print(f'Building the train_aug_dataset, train_plain_dataset and val_plain_dataset took {total_time_str} seconds', end='\n\n')
 
     # Set sampler that restricts data loading to a subset of the dataset
     # In conjunction with torch.nn.parallel.DistributedDataParallel
     train_aug_sampler = torch.utils.data.DistributedSampler(train_aug_dataset, shuffle=True)
     train_plain_sampler = torch.utils.data.DistributedSampler(train_plain_dataset, shuffle=True)
     val_plain_sampler = torch.utils.data.DistributedSampler(val_plain_dataset, shuffle=True)
+    val_plain_subset_sampler = torch.utils.data.DistributedSampler(val_plain_subset_dataset, shuffle=True)
 
     # Prepare the data for training with DataLoaders
     # pin_memory makes transferring images from CPU to GPU faster
@@ -102,34 +110,28 @@ def train_process(rank, args, start_training=True):
                                       num_workers=trainloader_params['num_workers'], pin_memory=trainloader_params['pin_memory'], drop_last=trainloader_params['drop_last'])
     val_plain_dataloader = DataLoader(val_plain_dataset, sampler=val_plain_sampler, batch_size=int(valloader_params['batch_size']/system_params['num_gpus']),
                                         num_workers=valloader_params['num_workers'], pin_memory=valloader_params['pin_memory'], drop_last=valloader_params['drop_last'])
+    val_plain_subset_dataloader = DataLoader(val_plain_subset_dataset, sampler=val_plain_subset_sampler, batch_size=int(valloader_params['batch_size']/system_params['num_gpus']),
+                                      num_workers=valloader_params['num_workers'], pin_memory=valloader_params['pin_memory'], drop_last=valloader_params['drop_last'])
+    if helper.is_main_process():
+        print(f"There are {len(train_aug_dataloader)} train_dataloaders on each rank. ")
+        print(f"There are {len(train_plain_dataloader)} train_plain_dataloader on each rank. ")
+        print(f"There are {len(val_plain_dataloader)} val_plain_dataloader on each rank. ")
+        print(f"There are {len(val_plain_subset_dataloader)} val_plain_subset_dataloader on each rank. ", end='\n\n')
 
-    # Tensorboard Summarywriter for logging
-    if not os.path.exists(ckpt_params['output_dir']):
-        os.makedirs(ckpt_params['output_dir'])
-    writer = SummaryWriter(ckpt_params['output_dir'])
-    writer.add_text("Configuration", json.dumps(args))
-
-    if rank == system_params['num_gpus']-1:
-        print(f"On each rank: there are {len(train_aug_dataloader)} train_dataloaders. ")
-        print(f"On each rank: there are {len(train_plain_dataloader)} train_plain_dataloader. ")
-        print(f"On each rank: there are {len(val_plain_dataloader)} val_plain_dataloader. ", end='\n\n')
-
-    # ============ building student and teacher networks ... ============
-    print(f"Rank: {rank}. Creating model: {model_params['backbone_option']}", end='\n\n')
+    # ============ Building student and teacher networks ... ============
+    if helper.is_main_process():
+        print(f"Rank: {rank}. Creating model: {model_params['backbone_option']}", end='\n\n')
     student_backbone, student_head, teacher_backbone, teacher_head = prepare_models.build_dino(model_params)
-
     student = prepare_models.MultiCropWrapper(student_backbone, student_head)
     teacher = prepare_models.MultiCropWrapper(teacher_backbone, teacher_head)
 
-    # Move networks to gpu
-    # This step is necessary for DDP later
-    student, teacher = student.cuda(),teacher.cuda()
+    # Move networks to gpu. This step is necessary for DDP later
+    student, teacher = student.cuda(), teacher.cuda()
 
-    # Synchronize batch norms (if any)
+    # If there is any batch norms, we synchronize them
     if helper.has_batchnorms(student):
         student = nn.SyncBatchNorm.convert_sync_batchnorm(student)
         teacher = nn.SyncBatchNorm.convert_sync_batchnorm(teacher)
-
         # We need DDP wrapper to have synchro batch norms working...
         teacher = nn.parallel.DistributedDataParallel(teacher, device_ids=[rank])
         teacher_without_ddp = teacher.module
@@ -138,14 +140,16 @@ def train_process(rank, args, start_training=True):
         teacher_without_ddp = teacher
     student = nn.parallel.DistributedDataParallel(student, device_ids=[rank])
 
-    # Teacher and student start with the same weights
-    teacher_without_ddp.load_state_dict(student.module.state_dict())
-    # There is no backpropagation through the teacher, so no need for gradients
-    # This step is to save some memory
-    for param in teacher.parameters():
-        param.requires_grad = False
+    # Teacher and student start with the same weights and we turn off the gradients on teacher network
+    helper.initialize_momentum_state(online_net=student, momentum_net=teacher_without_ddp)
 
-    # ============ preparing loss ... ============
+    # Log the number of trainable parameters in Tensorboard
+    if helper.is_main_process():
+        n_parameters_student = sum(p.numel() for p in student.parameters() if p.requires_grad)
+        print('Number of params of the student:', n_parameters_student)
+        writer.add_text("Number of params of the student", str(n_parameters_student))
+    
+    # ============ Preparing loss ... ============
     # Move dino_loss to gpu
     dino_loss = prepare_losses.DINOLoss(
         out_dim=model_params['out_dim'],
@@ -157,14 +161,12 @@ def train_process(rank, args, start_training=True):
         student_temp=training_params['student_temp'],
         center_momentum=training_params['center_momentum']).cuda()
 
-    # ============ preparing optimizer ... ============
-    params_dict = helper.get_params_groups(student)
-    if training_params['optimizer']['name'] == "adamw":
-        optimizer = torch.optim.AdamW(params_dict)  # to use with ViTs
-    elif training_params['optimizer']['name'] == "sgd":
-        optimizer = torch.optim.SGD(params_dict, lr=training_params['optimizer']['sgd']['lr'], momentum=training_params['optimizer']['sgd']['momentum'])  # lr is set by scheduler
-    elif training_params['optimizer']['name'] == "lars":
-        optimizer = utils.LARS(params_dict)  # to use with convnet and large batches
+    # ============ Preparing optimizer ... ============
+    optimizer = prepare_trainers.get_optimizer(
+        optimizer_choice=training_params['optimizer']['name'],
+        params_dict=helper.get_params_groups(student),
+        lr=training_params['optimizer']['sgd']['lr'],
+        momentum=training_params['optimizer']['sgd']['momentum'])
     # For mixed precision training
     # Each parameter’s gradient (.grad attribute) should be unscaled before the optimizer updates the parameters,
     # so the scale factor does not interfere with the learning rate.
@@ -172,10 +174,12 @@ def train_process(rank, args, start_training=True):
     if system_params['use_fp16']:
         fp16_scaler = torch.cuda.amp.GradScaler()
 
-    # ============ init schedulers ... ============
+    # ============ Initialize schedulers ... ============
+    # Linear scaling rule according to the paper below
+    # "Accurate, large minibatch sgd: Training imagenet in 1 hour."
+    base_lr = training_params['lr']['base_lr'] * trainloader_params['batch_size'] / 256.
     lr_schedule = helper.cosine_scheduler(
-        base_value=training_params['lr']['base_lr'] * trainloader_params['batch_size'] / 256.,  # linear scaling rule according to the paper below
-                                                                                          # "Accurate, large minibatch sgd: Training imagenet in 1 hour."
+        base_value=base_lr,
         final_value=training_params['lr']['final_lr'],
         epochs=training_params['num_epochs'],
         niter_per_ep=len(train_aug_dataset),
@@ -187,18 +191,18 @@ def train_process(rank, args, start_training=True):
         final_value=training_params['wd']['final_wd'],
         epochs=training_params['num_epochs'],
         niter_per_ep=len(train_aug_dataset),
-    )
+        )
     # Momentum parameter is increased to 1. during training with a cosine schedule
-    momentum_schedule = helper.cosine_scheduler(base_value=training_params['momentum']['base_momentum_teacher'],
-                                                final_value=training_params['momentum']['final_momentum_teacher'],
-                                                epochs=training_params['num_epochs'],
-                                                niter_per_ep=len(train_aug_dataset))
-    if rank == system_params['num_gpus']-1:
+    momentum_schedule = helper.cosine_scheduler(
+        base_value=training_params['momentum']['base_momentum_teacher'],
+        final_value=training_params['momentum']['final_momentum_teacher'],
+        epochs=training_params['num_epochs'],
+        niter_per_ep=len(train_aug_dataset))
+    if helper.is_main_process():
         print(f"Loss, optimizer and schedulers ready.")
 
-
-    # ============ start the training process ... ============
-    # ============ optionally resume training ... ============
+    # ============ Start the training process ... ============
+    # ============ Optionally resume training ... ============
     to_restore = {'epoch': ckpt_params['restore_epoch']}
     helper.restart_from_checkpoint(
         os.path.join(ckpt_params['output_dir'], "checkpoint.pth"),
@@ -217,42 +221,64 @@ def train_process(rank, args, start_training=True):
         # the beginning of each epoch **before** creating the :class:`DataLoader` iterator
         # is necessary to make shuffling work properly across multiple epochs. Otherwise,
         # the same ordering will be always used.
-        train_aug_dataloader.sampler.set_epoch(epoch)
-        train_plain_dataloader.sampler.set_epoch(epoch)
-        val_plain_dataloader.sampler.set_epoch(epoch)
+        if isinstance(train_aug_dataloader.sampler, torch.utils.data.DistributedSampler):
+            train_aug_dataloader.sampler.set_epoch(epoch)
+            train_plain_dataloader.sampler.set_epoch(epoch)
+            val_plain_dataloader.sampler.set_epoch(epoch)
 
-        # ============ training one epoch of DINO ... ============
-        num_epochs = training_params['num_epochs']
-        clip_grad = training_params['clip_grad']
-        freeze_last_layer = training_params['freeze_last_layer']
         if start_training:
-            prepare_trainers.train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, train_aug_dataloader,
-                            optimizer, lr_schedule, wd_schedule, momentum_schedule, epoch, num_epochs, clip_grad, freeze_last_layer,
-                            fp16_scaler)
+            embs, imgs, labels_ = evaluation.compute_embedding(student.module.backbone, val_plain_subset_dataloader, val_plain_dataloader)
+            writer.add_embedding(
+                embs,
+                metadata=[label_mapping[l] for l in labels_],
+                label_img=imgs,
+                global_step=epoch,
+                tag="embeddings_"+str(rank),
+            )
 
-    # model = teacher
-    # x = torch.randn(1, 3, 28, 28)
-    # x = x.repeat(2, 1, 1, 1).cuda(non_blocking=True)
-    # # print(x)
-    # print(x.shape)
-    # y = model(x)
-    # print(y)
-    # print(y[0].shape)
-    #
-    # model = student
-    # x = torch.randn(1, 3, 28, 28)
-    # x = x.repeat(2, 1, 1, 1).cuda(non_blocking=True)
-    # # print(x)
-    # print(x.shape)
-    # y = model(x)
-    # print(y)
-    # print(y[0].shape)
+            # ============ Training one epoch of DINO ... ============
+            train_stats = prepare_trainers.kd_train_one_epoch(epoch, training_params['num_epochs'],
+                                                              student, teacher, teacher_without_ddp, dino_loss, train_aug_dataloader,
+                                                              optimizer, lr_schedule, wd_schedule, momentum_schedule,
+                                                              training_params['clip_grad'], training_params['freeze_last_layer'], fp16_scaler)
 
-    return
+            # ============ Writing logs in tensorboard ... ============
+            # Log the number of training loss in Tensorboard
+            if helper.is_main_process():
+                writer.add_scalar("train_loss", train_stats['loss'], epoch)
+
+            # ============ Saving models and writing logs in log.txt file ... ============
+            save_dict = {
+                'student': student.state_dict(),
+                'teacher': teacher.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'epoch': epoch + 1,
+                'args': args,
+                'dino_loss': dino_loss.state_dict(),
+            }
+            if fp16_scaler is not None:
+                save_dict['fp16_scaler'] = fp16_scaler.state_dict()
+
+            if helper.is_main_process():
+                torch.save(save_dict, os.path.join(ckpt_params['output_dir'], "checkpoint.pth"))
+                if ckpt_params['saveckp_freq'] and epoch % ckpt_params['saveckp_freq'] == 0:
+                    torch.save(save_dict, os.path.join(ckpt_params['output_dir'], f'checkpoint{epoch:04}.pth'))
+
+            log_stats = {**{f'train_{k}': v for k, v in train_stats.items()}, 'epoch': epoch}
+            if helper.is_main_process():
+                with (Path(ckpt_params['output_dir']) / "log.txt").open("a") as f:
+                    f.write(json.dumps(log_stats) + "\n")
+
+        # Log the number of total training time in Tensorboard
+        total_time = time.time() - start_time
+        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+        if helper.is_main_process():
+            print('Training time {}'.format(total_time_str))
+            writer.add_text("Training time", total_time_str)
 
 def main(rank, args):
     # Set up training
-    train_process(rank, args, start_training=None)
+    train_process(rank, args, start_training=True)
 
 if __name__ == '__main__':
     # Read params and print them

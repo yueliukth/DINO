@@ -12,6 +12,21 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
 
+def initialize_momentum_state(online_net: nn.Module, momentum_net: nn.Module):
+    """Copies the parameters of the online network to the momentum network.
+    Args:
+        online_net (nn.Module): online network (e.g. online encoder, online projection, etc...).
+        momentum_net (nn.Module): momentum network (e.g. momentum encoder,
+            momentum projection, etc...).
+    """
+    # online_net and momentum_net start with the same weights
+    # Both parameters and persistent buffers (e.g. running averages) are included in state_dict
+    momentum_net.load_state_dict(online_net.module.state_dict())
+    # There is no backpropagation through the momentum net, so no need for gradients
+    # This step is to save some memory
+    for param in momentum_net.parameters():
+        param.requires_grad = False
+
 def clip_gradients(model, clip):
     """Rescale norm of computed gradients.
     Parameters
@@ -274,6 +289,9 @@ def set_sys_params(params):
 
     cudnn.benchmark = True
 
+def is_main_process():
+    return get_rank() == 0
+
 def get_rank():
     if not ddp():
         return 0
@@ -282,6 +300,13 @@ def get_rank():
 def ddp():
     world_size = dist.get_world_size()
     if not dist.is_available() or not dist.is_initialized() or world_size < 2:
+        return False
+    return True
+
+def is_dist_avail_and_initialized():
+    if not dist.is_available():
+        return False
+    if not dist.is_initialized():
         return False
     return True
 
@@ -320,11 +345,41 @@ def has_batchnorms(model):
             return True
     return False
 
+def synchronize():
+    if not ddp():
+        return
+    dist.barrier()
+
+def dist_gather_tensor(tensor, mode='all', dst_rank=0, concatenate=True, cat_dim=0, group=None):
+    if not ddp():
+        if not concatenate:
+            tensor = [tensor]
+        return tensor
+    world_size = dist.get_world_size()
+    rt = tensor.clone()
+    tensor_list = [torch.zeros_like(rt) for _ in range(world_size)]
+    if mode == 'all':
+        dist.all_gather(tensor_list, rt, group=group)
+    else:
+        if dist.get_backend() == 'nccl':
+            group = dist.new_group(backend="gloo")
+        else:
+            group = dist.group.WORLD
+        dist.gather(rt,
+                    gather_list=tensor_list if dist.get_rank() == dst_rank else None,
+                    dst=dst_rank, group=group)
+        if dist.get_rank() != dst_rank:
+            tensor_list = [tensor]
+    if concatenate:
+        tensor_list = torch.cat(tensor_list, dim=cat_dim)
+
+    return tensor_list
+
+
 def print_layers(model):
     names = []
     for name, param in model.named_parameters():
         if param.requires_grad:
             names.append(name)
     print(names)
-
 
