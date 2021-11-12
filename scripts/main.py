@@ -44,12 +44,12 @@ def parse_args(params_path=None):
     print(json.dumps(args, indent=4))
     return args
 
-def knn_in_train_process(rank, writer, backbone, train_dataloader, val_dataloader, label_mapping, epoch, save_params, if_original=False):
+def knn_in_train_process(rank, writer, use_cuda, backbone, train_dataloader, val_dataloader, label_mapping, epoch, save_params, if_original=False):
     knn_start_time = time.time()
     train_embeddings, _, train_labels = evaluation.compute_embedding(backbone.module.backbone, train_dataloader,
-                                                                     label_mapping, return_tb=False)
+                                                                     label_mapping, use_cuda=use_cuda, return_tb=False)
     val_embeddings, _, val_labels = evaluation.compute_embedding(backbone.module.backbone, val_dataloader,
-                                                                 label_mapping, return_tb=False)
+                                                                 label_mapping, use_cuda=use_cuda, return_tb=False)
     if rank==0:
         train_embeddings = nn.functional.normalize(train_embeddings, dim=1, p=2).cuda()
         val_embeddings = nn.functional.normalize(val_embeddings, dim=1, p=2).cuda()
@@ -102,7 +102,7 @@ def train_process(rank, args, start_training=True):
     # ============ Preparing data ... ============
     # Define transformations applied on augmented and plain data
     # The aug_dataset is for training, while plain_datasets is mostly used to compute knn and visualize the embeddings
-    transforms_aug = prepare_datasets.DataAugmentationDINO(dataset_params['n_chnl'],
+    transforms_aug = prepare_datasets.DataAugmentationDINO(
         augmentation_params['global_crops_scale'], augmentation_params['local_crops_scale'],
         augmentation_params['local_crops_number'], augmentation_params['global_size'],
         augmentation_params['local_size'])
@@ -225,7 +225,9 @@ def train_process(rank, args, start_training=True):
     helper.restart_from_checkpoint(os.path.join(save_params['output_dir'], "checkpoint.pth"), run_variables=to_restore,
         student=student, teacher=teacher, optimizer=optimizer, fp16_scaler=fp16_scaler, dino_loss=dino_loss, )
 
+    # Record the starting time
     start_time = time.time()
+
     # ============ Adding embeddings in tensorboard before the training starts ... ============
     tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(student.module.backbone,
                                                                              val_plain_dataloader, label_mapping,
@@ -235,21 +237,27 @@ def train_process(rank, args, start_training=True):
                              tag="embeddings_original")
 
     # ============ Adding knn results in tensorboard before the training starts ... ============
-    knn_in_train_process(rank=rank, writer=writer, backbone=student, train_dataloader=train_plain_dataloader, val_dataloader=val_plain_dataloader,
-                         label_mapping=label_mapping, epoch=to_restore['epoch'], save_params=save_params, if_original=True)
-    
-    print("Starting DINO training !")
-    for epoch in range(to_restore['epoch'], training_params['num_epochs']):
-        # In distributed mode, calling the :meth:`set_epoch` method at
-        # the beginning of each epoch **before** creating the :class:`DataLoader` iterator
-        # is necessary to make shuffling work properly across multiple epochs. Otherwise,
-        # the same ordering will be always used.
-        if isinstance(train_aug_dataloader.sampler, torch.utils.data.DistributedSampler):
-            train_aug_dataloader.sampler.set_epoch(epoch)
-            train_plain_dataloader.sampler.set_epoch(epoch)
-            val_plain_dataloader.sampler.set_epoch(epoch)
+    if dataset_params['dataset_name'] == 'ImageNet':
+        use_cuda = True
+    else:
+        use_cuda = False
 
-        if start_training:
+    knn_in_train_process(rank=rank, writer=writer, use_cuda=use_cuda, backbone=student, train_dataloader=train_plain_dataloader, val_dataloader=val_plain_dataloader,
+                         label_mapping=label_mapping, epoch=to_restore['epoch'], save_params=save_params, if_original=True)
+
+    if start_training:
+        print("Starting DINO training !")
+        for epoch in range(to_restore['epoch'], training_params['num_epochs']):
+            # In distributed mode, calling the :meth:`set_epoch` method at
+            # the beginning of each epoch **before** creating the :class:`DataLoader` iterator
+            # is necessary to make shuffling work properly across multiple epochs. Otherwise,
+            # the same ordering will be always used.
+            if isinstance(train_aug_dataloader.sampler, torch.utils.data.DistributedSampler):
+                train_aug_dataloader.sampler.set_epoch(epoch)
+                train_plain_dataloader.sampler.set_epoch(epoch)
+                val_plain_dataloader.sampler.set_epoch(epoch)
+
+
             # ============ Training one epoch of DINO ... ============
             train_stats = prepare_trainers.kd_train_one_epoch(epoch, training_params['num_epochs'], student, teacher,
                                                               teacher_without_ddp, dino_loss, train_aug_dataloader,
@@ -272,7 +280,7 @@ def train_process(rank, args, start_training=True):
                     writer.add_embedding(tb_embeddings, metadata=tb_metatdata, label_img=tb_label_img,
                                          global_step=epoch, tag="embeddings")
 
-                knn_in_train_process(rank=rank, writer=writer, backbone=student, train_dataloader=train_plain_dataloader, val_dataloader=val_plain_dataloader,
+                knn_in_train_process(rank=rank, writer=writer, use_cuda=use_cuda, backbone=student, train_dataloader=train_plain_dataloader, val_dataloader=val_plain_dataloader,
                                      label_mapping=label_mapping, epoch=epoch, save_params=save_params)
 
             # ============ Saving models and writing logs in log.txt file ... ============
@@ -292,11 +300,11 @@ def train_process(rank, args, start_training=True):
                 with (Path(save_params['output_dir']) / "log.txt").open("a") as f:
                     f.write(json.dumps(log_stats) + "\n")
 
-    # Log the number of total training time in Tensorboard
-    total_time = time.time() - start_time
-    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print('Training time {}'.format(total_time_str))
-    writer.add_text(f"Training time from epoch {to_restore['epoch']} to epoch {training_params['num_epochs']}", total_time_str)
+        # Log the number of total training time in Tensorboard
+        total_time = time.time() - start_time
+        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+        print('Training time {}'.format(total_time_str))
+        writer.add_text(f"Training time from epoch {to_restore['epoch']} to epoch {training_params['num_epochs']}", total_time_str)
 
 
 def main(rank, args):

@@ -136,8 +136,7 @@ class DataAugmentationDINO(object):
         Local transform. Note that the augmentation is stochastic so one
         instance is enough and will lead to different crops.
     """
-    def __init__(self, n_chnl, global_crops_scale, local_crops_scale, local_crops_number, global_size, local_size):
-        self.n_chnl = n_chnl
+    def __init__(self, global_crops_scale, local_crops_scale, local_crops_number, global_size, local_size):
         flip_and_color_jitter = transforms.Compose([
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomApply(

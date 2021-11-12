@@ -5,7 +5,7 @@ import torch.distributed as dist
 import helper
 
 
-def compute_embedding(backbone, dataloader, label_mapping, return_tb=False, subset_size=0):
+def compute_embedding(backbone, dataloader, label_mapping, use_cuda=False, return_tb=False, subset_size=0):
     """Compute CLS embedding and prepare for TensorBoard.
      Parameters
      ----------
@@ -37,17 +37,20 @@ def compute_embedding(backbone, dataloader, label_mapping, return_tb=False, subs
         # Initialise storage matrix
         if helper.is_main_process() and embeddings is None:
             embeddings = torch.zeros(len(dataloader.dataset), embs.shape[-1])
-            embeddings = embeddings.cuda(non_blocking=True)
+            if use_cuda:
+                embeddings = embeddings.cuda(non_blocking=True)
             # print(f"Storing features into tensor of shape {embeddings.shape}")
 
         if helper.is_main_process() and images is None:
             images = torch.zeros(len(dataloader.dataset), img.shape[1], img.shape[2], img.shape[3])
-            images = images.cuda(non_blocking=True)
+            if use_cuda:
+                images = images.cuda(non_blocking=True)
             # print(f"Storing images into tensor of shape {images.shape}")
 
         if helper.is_main_process() and labels is None:
             labels = torch.zeros(len(dataloader.dataset), lab.shape[-1])
-            labels = labels.cuda(non_blocking=True)
+            if use_cuda:
+                labels = labels.cuda(non_blocking=True)
             # print(f"Storing labels into tensor of shape {labels.shape}")
 
         # Share features between processes
@@ -97,9 +100,14 @@ def compute_embedding(backbone, dataloader, label_mapping, return_tb=False, subs
 
         # update storage feature matrix
         if helper.is_main_process():
-            embeddings.index_copy_(0, index_all, torch.cat(embs_l))
-            images.index_copy_(0, index_all, torch.cat(img_l))
-            labels.index_copy_(0, index_all, torch.cat(lab_l))
+            if use_cuda:
+                embeddings.index_copy_(0, index_all, torch.cat(embs_l))
+                images.index_copy_(0, index_all, torch.cat(img_l))
+                labels.index_copy_(0, index_all, torch.cat(lab_l))
+            else:
+                embeddings.index_copy_(0, index_all.cpu(), torch.cat(embs_l).cpu())
+                images.index_copy_(0, index_all.cpu(), torch.cat(img_l).cpu())
+                labels.index_copy_(0, index_all.cpu(), torch.cat(lab_l).cpu())
 
     if helper.is_main_process():
         # if return_tb for tensorboard logging, returned labels contain real cls names such as "golf ball" etc

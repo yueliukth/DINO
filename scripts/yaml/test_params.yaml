@@ -1,5 +1,5 @@
 {
-"start_training": True,
+"start_training": True, # If start_training is False, only the embedding and KNN results would be logged in Tensorboard
 "save_params": { "output_dir": "/storage/yue/dino_models/test/",
                  "restore_epoch": 0,
                  "saveckp_freq": 1,
@@ -7,17 +7,16 @@
                  "nb_knn": [20],
                  "temp_knn": 0.07
                },
-"dataset_params": { "dataset_name": "IMAGENETTE", # "ImageNet", "IMAGENETTE"
-                    "n_chnl": 1,
+"dataset_params": { "dataset_name": "ImageNet", # "ImageNet", "IMAGENETTE"
                     "data_folder": "/storage/yue/data/",
                   },
-"dataloader_params": {"trainloader":{"batch_size": 6,
-                                     "num_workers": 2,
+"dataloader_params": {"trainloader":{"batch_size": 16,
+                                     "num_workers": 6,
                                      "pin_memory": True,
                                      "drop_last": True},
-                      "valloader": { "batch_size": 6,
-                                     "num_workers": 2,
-                                     "pin_memory": True,
+                      "valloader": { "batch_size": 16,
+                                     "num_workers": 6,
+                                     "pin_memory": False,
                                      "drop_last": False}
                      },
 "augmentation_params": {"global_crops_scale": [0.4, 1.],
