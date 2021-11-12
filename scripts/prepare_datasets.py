@@ -13,6 +13,102 @@ from fastai.vision.all import *
 
 import helper
 
+class ReturnIndexDataset(datasets.ImageFolder):
+    def __getitem__(self, idx):
+        img, lab = super(ReturnIndexDataset, self).__getitem__(idx)
+        return img, lab, idx
+
+class GetDatasets():
+    def __init__(self, dataset_params):
+        self.dataset_params = dataset_params
+        self.dataset_name = dataset_params['dataset_name']
+        self.data_folder = dataset_params['data_folder']
+        if self.dataset_name == 'ImageNet' \
+                or self.dataset_name == 'IMAGENETTE':
+            label_mapping_dict = open('data_label_mapping/ImageNet.json')
+            self.label_mapping = json.load(label_mapping_dict)
+        elif self.dataset_name == 'FashionMNIST':
+            label_mapping_dict = open('data_label_mapping/FashionMNIST.json')
+            self.label_mapping = json.load(label_mapping_dict)
+
+    def get_datasets(self, official_split, transforms, include_index=False):
+        #transforms = ToTensor()
+        if self.dataset_name == 'ImageNet':
+            # Train: 1,281,167 images
+            # Val: 50,000 images
+            # Test: 100,000 images
+            target_path = os.path.join(self.data_folder, 'imagenet/ILSVRC/Data/CLS-LOC/')
+        elif self.dataset_name == 'IMAGENETTE':
+            # Train: 9,469 images
+            # Val: 3,925 images
+            target_path = os.path.join(self.data_folder, "imagenette2")
+            target_path = os.path.abspath(target_path)
+            if not os.path.exists(target_path) or len(os.listdir(target_path)) == 0:
+                # If IMAGENETTE does not exist in data folder, we download it with fastai
+                path = untar_data(URLs.IMAGENETTE)
+                if not os.path.exists(os.path.dirname(target_path)):
+                    os.makedirs(os.path.dirname(target_path))
+                # Copy data folder from .fastai/data to our local DINO folder
+                shutil.copytree(path, target_path)
+        if include_index:
+            dataset = ReturnIndexDataset(os.path.join(target_path, official_split), transform=transforms)
+        else:
+            dataset = ImageFolder(os.path.join(target_path, official_split), transform=transforms)
+
+        # elif self.dataset_name == 'FashionMNIST':
+        #     # Train: 60,000 images
+        #     # Test: 10,000 images
+        #     # We consider the test set of FashionMNIST as validation set in our task
+        #     if official_split == 'train':
+        #         dataset = datasets.FashionMNIST(
+        #         root=self.data_folder,
+        #         train=True,
+        #         download=True,
+        #         transform=transforms)
+        #     else:
+        #         dataset = datasets.FashionMNIST(
+        #         root=self.data_folder,
+        #         train=False,
+        #         download=True,
+        #         transform=transforms)
+        if helper.is_main_process():
+            print(f"There are {len(dataset)} images in {official_split} split, on each rank. ")
+        return dataset
+
+
+class GaussianBlur(object):
+    """
+    Apply Gaussian Blur to the PIL image.
+    """
+    def __init__(self, p=0.5, radius_min=0.1, radius_max=2.):
+        self.prob = p
+        self.radius_min = radius_min
+        self.radius_max = radius_max
+
+    def __call__(self, img):
+        do_it = random.random() <= self.prob
+        if not do_it:
+            return img
+
+        return img.filter(
+            ImageFilter.GaussianBlur(
+                radius=random.uniform(self.radius_min, self.radius_max)
+            )
+        )
+
+class Solarization(object):
+    """
+    Apply Solarization to the PIL image.
+    """
+    def __init__(self, p):
+        self.p = p
+
+    def __call__(self, img):
+        if random.random() < self.p:
+            return ImageOps.solarize(img)
+        else:
+            return img
+
 class DataAugmentationDINO(object):
     # Adopted from the original DINO implementation
     # Removed the hardcoded global_size and local_size
@@ -53,7 +149,7 @@ class DataAugmentationDINO(object):
 
 
         normalize = transforms.Compose([transforms.ToTensor(),
-                                            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),])
+                                        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),])
         # elif int(self.n_chnl) == 1:
         #     normalize = transforms.Compose([transforms.ToTensor(),
         #                                     transforms.Lambda(lambda x: torch.cat([x, x, x], 0)),
@@ -95,90 +191,3 @@ class DataAugmentationDINO(object):
             crops.append(self.local_transforms(image))
         return crops
 
-class GetDatasets():
-    def __init__(self, dataset_params):
-        self.dataset_params = dataset_params
-        self.dataset_name = dataset_params['dataset_name']
-        self.data_folder = dataset_params['data_folder']
-        if self.dataset_name == 'ImageNet' \
-                or self.dataset_name == 'IMAGENETTE':
-            label_mapping_dict = open('data_label_mapping/ImageNet.json')
-            self.label_mapping = json.load(label_mapping_dict)
-        elif self.dataset_name == 'FashionMNIST':
-            label_mapping_dict = open('data_label_mapping/FashionMNIST.json')
-            self.label_mapping = json.load(label_mapping_dict)
-
-    def get_datasets(self, official_split, transforms):
-        #transforms = ToTensor()
-        if self.dataset_name == 'ImageNet':
-            # Train: 1,281,167 images
-            # Val: 50,000 images
-            # Test: 100,000 images
-            target_path = os.path.join(self.data_folder, 'imagenet/ILSVRC/Data/CLS-LOC/')
-            dataset = ImageFolder(os.path.join(target_path, official_split), transform=transforms)
-        elif self.dataset_name == 'IMAGENETTE':
-            # Train: 9,469 images
-            # Val: 3,925 images
-            target_path = os.path.join(self.data_folder, "imagenette2")
-            target_path = os.path.abspath(target_path)
-            if not os.path.exists(target_path) or len(os.listdir(target_path)) == 0:
-                # If IMAGENETTE does not exist in data folder, we download it with fastai
-                path = untar_data(URLs.IMAGENETTE)
-                if not os.path.exists(os.path.dirname(target_path)):
-                    os.makedirs(os.path.dirname(target_path))
-                # Copy data folder from .fastai/data to our local DINO folder
-                shutil.copytree(path, target_path)
-            dataset = ImageFolder(os.path.join(target_path, official_split), transform=transforms)
-        elif self.dataset_name == 'FashionMNIST':
-            # Train: 60,000 images
-            # Test: 10,000 images
-            # We consider the test set of FashionMNIST as validation set in our task
-            if official_split == 'train':
-                dataset = datasets.FashionMNIST(
-                root=self.data_folder,
-                train=True,
-                download=True,
-                transform=transforms)
-            else:
-                dataset = datasets.FashionMNIST(
-                root=self.data_folder,
-                train=False,
-                download=True,
-                transform=transforms)
-        if helper.is_main_process():
-            print(f"There are {len(dataset)} images in {official_split} split, on each rank. ")
-        return dataset
-
-
-class GaussianBlur(object):
-    """
-    Apply Gaussian Blur to the PIL image.
-    """
-    def __init__(self, p=0.5, radius_min=0.1, radius_max=2.):
-        self.prob = p
-        self.radius_min = radius_min
-        self.radius_max = radius_max
-
-    def __call__(self, img):
-        do_it = random.random() <= self.prob
-        if not do_it:
-            return img
-
-        return img.filter(
-            ImageFilter.GaussianBlur(
-                radius=random.uniform(self.radius_min, self.radius_max)
-            )
-        )
-
-class Solarization(object):
-    """
-    Apply Solarization to the PIL image.
-    """
-    def __init__(self, p):
-        self.p = p
-
-    def __call__(self, img):
-        if random.random() < self.p:
-            return ImageOps.solarize(img)
-        else:
-            return img
