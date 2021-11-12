@@ -28,7 +28,6 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-
 def parse_args(params_path=None):
     parser = argparse.ArgumentParser(description='DINO reimplementation')
 
@@ -45,10 +44,38 @@ def parse_args(params_path=None):
     print(json.dumps(args, indent=4))
     return args
 
+def knn_in_train_process(rank, writer, backbone, train_dataloader, val_dataloader, label_mapping, epoch, save_params, if_original=False):
+    knn_start_time = time.time()
+    train_embeddings, _, train_labels = evaluation.compute_embedding(backbone.module.backbone, train_dataloader,
+                                                                     label_mapping, return_tb=False)
+    val_embeddings, _, val_labels = evaluation.compute_embedding(backbone.module.backbone, val_dataloader,
+                                                                 label_mapping, return_tb=False)
+    if rank==0:
+        train_embeddings = nn.functional.normalize(train_embeddings, dim=1, p=2).cuda()
+        val_embeddings = nn.functional.normalize(val_embeddings, dim=1, p=2).cuda()
+        print(f'train/val embeddings size: , {train_embeddings.size()}, {val_embeddings.size()}')
+        train_labels = train_labels.long().cuda()
+        val_labels = val_labels.long().cuda()
+        print(f'train/val labels size: , {train_labels.size()}, {val_labels.size()}')
+        print("Features are ready!\nStart the k-NN classification.")
+
+        for k in save_params['nb_knn']:
+            top1, top5 = evaluation.knn_classifier(train_embeddings, train_labels,
+                                                   val_embeddings, val_labels, k, save_params['temp_knn'])
+            print(f"{k}-NN classifier result: Top1: {top1}, Top5: {top5}")
+            knn_total_time = time.time() - knn_start_time
+            knn_total_time_str = str(datetime.timedelta(seconds=int(knn_total_time)))
+            print('KNN time {}'.format(knn_total_time_str))
+            if if_original:
+                writer.add_scalar(f"{k}nn_top1_original", top1, epoch)
+                writer.add_scalar(f"{k}nn_top5_original", top5, epoch)
+            else:
+                writer.add_scalar(f"{k}nn_top1", top1, epoch)
+                writer.add_scalar(f"{k}nn_top5", top5, epoch)
 
 def train_process(rank, args, start_training=True):
     # Define some parameters for easy access
-    ckpt_params = args['ckpt_params']
+    save_params = args['save_params']
     dataset_params = args['dataset_params']
     system_params = args['system_params']
     dataloader_params = args['dataloader_params']
@@ -58,17 +85,19 @@ def train_process(rank, args, start_training=True):
     trainloader_params = dataloader_params['trainloader']
     valloader_params = dataloader_params['valloader']
 
+    # Tensorboard Summarywriter for logging
+    # Log network input arg in Tensorboard
+    tensorboard_path = os.path.join(save_params['output_dir'], 'tensorboard/')
+    if rank==0:
+        if not os.path.exists(tensorboard_path):
+            os.makedirs(tensorboard_path)
+        global  writer
+    writer = SummaryWriter(tensorboard_path)
+    writer.add_text("Configuration", json.dumps(args, indent=4))
+
     # ============ Preparing system configuration ... ============
     # Set gpu params and random seeds for reproducibility
     helper.set_sys_params(system_params)
-    # Tensorboard Summarywriter for logging
-    # Log network input arg in Tensorboard
-    tensorboard_path = os.path.join(ckpt_params['output_dir'], 'tensorboard/')
-    if helper.is_main_process():
-        if not os.path.exists(tensorboard_path):
-            os.makedirs(tensorboard_path)
-        writer = SummaryWriter(tensorboard_path)
-        writer.add_text("Configuration", json.dumps(args, indent=4))
 
     # ============ Preparing data ... ============
     # Define transformations applied on augmented and plain data
@@ -82,13 +111,12 @@ def train_process(rank, args, start_training=True):
     start_time = time.time()
     label_mapping = prepare_datasets.GetDatasets(dataset_params).label_mapping
     train_aug_dataset = prepare_datasets.GetDatasets(dataset_params).get_datasets('train/', transforms_aug)
-    train_plain_dataset = prepare_datasets.GetDatasets(dataset_params).get_datasets('train/', transforms_plain)
-    val_plain_dataset = prepare_datasets.GetDatasets(dataset_params).get_datasets('val/', transforms_plain,
-                                                                                  include_index=True)
+    train_plain_dataset = prepare_datasets.GetDatasets(dataset_params).get_datasets('train/', transforms_plain, include_index=True)
+    val_plain_dataset = prepare_datasets.GetDatasets(dataset_params).get_datasets('val/', transforms_plain, include_index=True)
 
     if train_plain_dataset.classes != val_plain_dataset.classes:
         raise ValueError("Inconsistent classes in train and val.")
-    if helper.is_main_process():
+    if rank==0:
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
         print(
@@ -118,13 +146,13 @@ def train_process(rank, args, start_training=True):
                                       num_workers=valloader_params['num_workers'],
                                       pin_memory=valloader_params['pin_memory'],
                                       drop_last=valloader_params['drop_last'])
-    if helper.is_main_process():
+    if rank==0:
         print(f"There are {len(train_aug_dataloader)} train_dataloaders on each rank. ")
         print(f"There are {len(train_plain_dataloader)} train_plain_dataloader on each rank. ")
         print(f"There are {len(val_plain_dataloader)} val_plain_dataloader on each rank. ")
 
     # ============ Building student and teacher networks ... ============
-    if helper.is_main_process():
+    if rank==0:
         print(f"Rank: {rank}. Creating model: {model_params['backbone_option']}", end='\n\n')
     student_backbone, student_head, teacher_backbone, teacher_head = prepare_models.build_dino(model_params)
     student = prepare_models.MultiCropWrapper(student_backbone, student_head)
@@ -149,7 +177,7 @@ def train_process(rank, args, start_training=True):
     helper.initialize_momentum_state(online_net=student, momentum_net=teacher_without_ddp)
 
     # Log the number of trainable parameters in Tensorboard
-    if helper.is_main_process():
+    if rank==0:
         n_parameters_student = sum(p.numel() for p in student.parameters() if p.requires_grad)
         print('Number of params of the student:', n_parameters_student)
         writer.add_text("Number of params of the student", str(n_parameters_student))
@@ -189,16 +217,27 @@ def train_process(rank, args, start_training=True):
     momentum_schedule = helper.cosine_scheduler(base_value=training_params['momentum']['base_momentum_teacher'],
         final_value=training_params['momentum']['final_momentum_teacher'], epochs=training_params['num_epochs'],
         niter_per_ep=len(train_aug_dataset))
-    if helper.is_main_process():
+    if rank==0:
         print(f"Loss, optimizer and schedulers ready.")
 
-    # ============ Start the training process ... ============
     # ============ Optionally resume training ... ============
-    to_restore = {'epoch': ckpt_params['restore_epoch']}
-    helper.restart_from_checkpoint(os.path.join(ckpt_params['output_dir'], "checkpoint.pth"), run_variables=to_restore,
+    to_restore = {'epoch': save_params['restore_epoch']}
+    helper.restart_from_checkpoint(os.path.join(save_params['output_dir'], "checkpoint.pth"), run_variables=to_restore,
         student=student, teacher=teacher, optimizer=optimizer, fp16_scaler=fp16_scaler, dino_loss=dino_loss, )
 
     start_time = time.time()
+    # ============ Adding embeddings in tensorboard before the training starts ... ============
+    tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(student.module.backbone,
+                                                                             val_plain_dataloader, label_mapping,
+                                                                             return_tb=True, subset_size=100)
+    if rank==0:
+        writer.add_embedding(tb_embeddings, metadata=tb_metatdata, label_img=tb_label_img, global_step=to_restore['epoch'],
+                             tag="embeddings_original")
+
+    # ============ Adding knn results in tensorboard before the training starts ... ============
+    knn_in_train_process(rank=rank, writer=writer, backbone=student, train_dataloader=train_plain_dataloader, val_dataloader=val_plain_dataloader,
+                         label_mapping=label_mapping, epoch=to_restore['epoch'], save_params=save_params, if_original=True)
+    
     print("Starting DINO training !")
     for epoch in range(to_restore['epoch'], training_params['num_epochs']):
         # In distributed mode, calling the :meth:`set_epoch` method at
@@ -210,14 +249,6 @@ def train_process(rank, args, start_training=True):
             train_plain_dataloader.sampler.set_epoch(epoch)
             val_plain_dataloader.sampler.set_epoch(epoch)
 
-        # ============ Adding representation embeddings in tensorboard ... ============
-        tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(student.module.backbone,
-                                                                                 val_plain_dataloader, label_mapping,
-                                                                                 return_subset=True, subset_size=100)
-        if helper.is_main_process():
-            writer.add_embedding(tb_embeddings, metadata=tb_metatdata, label_img=tb_label_img, global_step=epoch,
-                                 tag="embeddings_original")
-
         if start_training:
             # ============ Training one epoch of DINO ... ============
             train_stats = prepare_trainers.kd_train_one_epoch(epoch, training_params['num_epochs'], student, teacher,
@@ -226,20 +257,23 @@ def train_process(rank, args, start_training=True):
                                                               training_params['clip_grad'],
                                                               training_params['freeze_last_layer'], fp16_scaler)
 
-            # ============ Writing logs & adding representation embeddings in tensorboard ... ============
+            # ============ Writing logs & adding representation embeddings & KNN results in tensorboard ... ============
             # Log the number of training loss in Tensorboard, at every epoch
-            if helper.is_main_process():
+            if rank==0:
                 writer.add_scalar("train_loss", train_stats['loss'], epoch)
-            # Log the embeddings in Tensorboard, at every embedding_freq epoch
-            if ckpt_params['embedding_freq'] and epoch % ckpt_params['embedding_freq'] == 0:
+            # Log the embeddings & KNN results in Tensorboard, at every tb_freq epoch
+            if save_params['tb_freq'] and epoch % save_params['tb_freq'] == 0:
                 tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(student.module.backbone,
                                                                                          val_plain_dataloader,
                                                                                          label_mapping,
-                                                                                         return_subset=True,
+                                                                                         return_tb=True,
                                                                                          subset_size=100)
-                if helper.is_main_process():
+                if rank==0:
                     writer.add_embedding(tb_embeddings, metadata=tb_metatdata, label_img=tb_label_img,
-                                         global_step=epoch, tag="embeddings_original")
+                                         global_step=epoch, tag="embeddings")
+
+                knn_in_train_process(rank=rank, writer=writer, backbone=student, train_dataloader=train_plain_dataloader, val_dataloader=val_plain_dataloader,
+                                     label_mapping=label_mapping, epoch=epoch, save_params=save_params)
 
             # ============ Saving models and writing logs in log.txt file ... ============
             save_dict = {'student': student.state_dict(), 'teacher': teacher.state_dict(),
@@ -248,27 +282,26 @@ def train_process(rank, args, start_training=True):
             if fp16_scaler is not None:
                 save_dict['fp16_scaler'] = fp16_scaler.state_dict()
 
-            if helper.is_main_process():
-                torch.save(save_dict, os.path.join(ckpt_params['output_dir'], "checkpoint.pth"))
-                if ckpt_params['saveckp_freq'] and epoch % ckpt_params['saveckp_freq'] == 0:
-                    torch.save(save_dict, os.path.join(ckpt_params['output_dir'], f'checkpoint{epoch:04}.pth'))
+            if rank==0:
+                torch.save(save_dict, os.path.join(save_params['output_dir'], "checkpoint.pth"))
+                if save_params['saveckp_freq'] and epoch % save_params['saveckp_freq'] == 0:
+                    torch.save(save_dict, os.path.join(save_params['output_dir'], f'checkpoint{epoch:04}.pth'))
 
             log_stats = {**{f'train_{k}': v for k, v in train_stats.items()}, 'epoch': epoch}
-            if helper.is_main_process():
-                with (Path(ckpt_params['output_dir']) / "log.txt").open("a") as f:
+            if rank==0:
+                with (Path(save_params['output_dir']) / "log.txt").open("a") as f:
                     f.write(json.dumps(log_stats) + "\n")
 
-        # Log the number of total training time in Tensorboard
-        total_time = time.time() - start_time
-        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        if helper.is_main_process():
-            print('Training time {}'.format(total_time_str))
-            writer.add_text("Training time", total_time_str)
+    # Log the number of total training time in Tensorboard
+    total_time = time.time() - start_time
+    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+    print('Training time {}'.format(total_time_str))
+    writer.add_text(f"Training time from epoch {to_restore['epoch']} to epoch {training_params['num_epochs']}", total_time_str)
 
 
 def main(rank, args):
     # Set up training
-    train_process(rank, args, start_training=True)
+    train_process(rank, args, start_training=args['start_training'])
 
 
 if __name__ == '__main__':
@@ -277,3 +310,5 @@ if __name__ == '__main__':
 
     # Launch multi-gpu / distributed training
     helper.launch(main, args)
+
+

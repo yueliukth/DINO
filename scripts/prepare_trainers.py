@@ -17,7 +17,7 @@ def kd_train_one_epoch(epoch, num_epochs,
                        clip_grad, freeze_last_layer, fp16_scaler):
     metric_logger = helper.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}/{}]'.format(epoch, num_epochs)
-    for it, (images, _) in enumerate(metric_logger.log_every(iterable=data_loader, print_freq=10, header=header)):
+    for it, (images, _) in enumerate(metric_logger.log_every(iterable=data_loader, print_freq=100, header=header)):
         # Update weight decay and learning rate according to their schedule
         it = len(data_loader) * epoch + it  # global training iteration
         for i, param_group in enumerate(optimizer.param_groups):
