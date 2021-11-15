@@ -53,7 +53,7 @@ class DINOLoss(nn.Module):
         student_out = student_output.chunk(self.num_crops)
         student_temp = [s / self.student_temp for s in student_out]
 
-        # Teacher centering and sharpening
+        # Teacher centering and sharpening to avoid collapse
         teacher_out = teacher_output.chunk(2)
         temp = self.teacher_temp_schedule[epoch]
         teacher_temp = [(t - self.center) / temp for t in teacher_out]

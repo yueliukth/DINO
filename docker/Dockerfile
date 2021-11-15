@@ -91,4 +91,4 @@ RUN conda install -c conda-forge vim
 RUN apt-get -y install vim nano
 RUN pip install pyclean
 RUN env > /root/env.txt #&& cron -f
-RUN echo 'alias jupyter="jupyter notebook --ip 0.0.0.0 --no-browser --allow-root --port 8084"' >> ~/.bashrc
+RUN echo 'alias jupyter="jupyter notebook --ip 0.0.0.0 --no-browser --allow-root --port 8066"' >> ~/.bashrc

@@ -124,6 +124,8 @@ class DataAugmentationDINO(object):
         Range of sizes for the local crops.
     local_crops_number : int
         Number of local crops to create.
+    full_size: int
+        The size of the full image, eg, on ImageNet, the standard setting is 256.
     global_size : int
         The size of the final global crop.
     local_size : int
@@ -136,7 +138,7 @@ class DataAugmentationDINO(object):
         Local transform. Note that the augmentation is stochastic so one
         instance is enough and will lead to different crops.
     """
-    def __init__(self, global_crops_scale, local_crops_scale, local_crops_number, global_size, local_size):
+    def __init__(self, global_crops_scale, local_crops_scale, local_crops_number, full_size, global_size, local_size):
         flip_and_color_jitter = transforms.Compose([
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomApply(
@@ -149,14 +151,11 @@ class DataAugmentationDINO(object):
 
         normalize = transforms.Compose([transforms.ToTensor(),
                                         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),])
-        # elif int(self.n_chnl) == 1:
-        #     normalize = transforms.Compose([transforms.ToTensor(),
-        #                                     transforms.Lambda(lambda x: torch.cat([x, x, x], 0)),
-        #                                     transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),])
-
+    
         self.transforms_plain = transforms.Compose([
-            normalize,
-            transforms.Resize((global_size, global_size))])
+            transforms.Resize(full_size, interpolation=3),
+            transforms.CenterCrop(global_size),
+            normalize])
 
         # first global crop
         self.global_transforms1 = transforms.Compose([

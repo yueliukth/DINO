@@ -44,6 +44,24 @@ def parse_args(params_path=None):
     print(json.dumps(args, indent=4))
     return args
 
+def knn_with_features(writer, train_embeddings, train_labels, val_embeddings, val_labels, epoch, save_params, if_original=False, if_eval=False):
+    for k in save_params['nb_knn']:
+        top1, top5 = evaluation.knn_classifier(train_embeddings, train_labels,
+                                               val_embeddings, val_labels, k, save_params['temp_knn'])
+        print(f"{k}-NN classifier result: Top1: {top1}, Top5: {top5}")
+        
+        if writer != None:
+            if if_original:
+                writer.add_scalar(f"{k}nn_top1_original", top1, epoch)
+                writer.add_scalar(f"{k}nn_top5_original", top5, epoch)
+            else:
+                if if_eval:
+                    writer.add_scalar(f"{k}nn_top1_eval", top1, epoch)
+                    writer.add_scalar(f"{k}nn_top5_eval", top5, epoch)
+                else:
+                    writer.add_scalar(f"{k}nn_top1", top1, epoch)
+                    writer.add_scalar(f"{k}nn_top5", top5, epoch)
+
 def knn_in_train_process(rank, writer, use_cuda, backbone, train_dataloader, val_dataloader, label_mapping, epoch, save_params, if_original=False, if_eval=False):
     knn_start_time = time.time()
     train_embeddings, train_labels = evaluation.compute_embedding(backbone.module.backbone, train_dataloader,
@@ -59,24 +77,10 @@ def knn_in_train_process(rank, writer, use_cuda, backbone, train_dataloader, val
         print(f'train/val labels size: , {train_labels.size()}, {val_labels.size()}')
         print("Features are ready!\nStart the k-NN classification.")
 
-        for k in save_params['nb_knn']:
-            top1, top5 = evaluation.knn_classifier(train_embeddings, train_labels,
-                                                   val_embeddings, val_labels, k, save_params['temp_knn'])
-            print(f"{k}-NN classifier result: Top1: {top1}, Top5: {top5}")
-            knn_total_time = time.time() - knn_start_time
-            knn_total_time_str = str(datetime.timedelta(seconds=int(knn_total_time)))
-            print('KNN time {}'.format(knn_total_time_str))
-            if if_original:
-                writer.add_scalar(f"{k}nn_top1_original", top1, epoch)
-                writer.add_scalar(f"{k}nn_top5_original", top5, epoch)
-            else:
-                if if_eval:
-                    writer.add_scalar(f"{k}nn_top1_eval", top1, epoch)
-                    writer.add_scalar(f"{k}nn_top5_eval", top5, epoch)
-                else:
-                    writer.add_scalar(f"{k}nn_top1", top1, epoch)
-                    writer.add_scalar(f"{k}nn_top5", top5, epoch)
-
+        knn_with_features(writer, train_embeddings, train_labels, val_embeddings, val_labels, epoch, save_params, if_original=False, if_eval=False)
+        knn_total_time = time.time() - knn_start_time
+        knn_total_time_str = str(datetime.timedelta(seconds=int(knn_total_time)))
+        print('KNN time {}'.format(knn_total_time_str))
     return train_embeddings, train_labels, val_embeddings, val_labels
 
 def train_process(rank, args, start_training=True):
@@ -92,7 +96,7 @@ def train_process(rank, args, start_training=True):
     valloader_params = dataloader_params['valloader']
 
     # Tensorboard Summarywriter for logging
-    # Log network input arg in Tensorboard
+    # Log network input arg in Tensorboard and save it into a yaml file
     tensorboard_path = os.path.join(save_params['output_dir'], 'tensorboard/')
     if rank==0:
         if not os.path.exists(tensorboard_path):
@@ -100,6 +104,11 @@ def train_process(rank, args, start_training=True):
         global  writer
     writer = SummaryWriter(tensorboard_path)
     writer.add_text("Configuration", json.dumps(args, indent=4))
+    output_file_path = os.path.join(save_params['output_dir'], 'config.yaml')
+    if not os.path.exists(os.path.dirname(output_file_path)):
+        os.makedirs(os.path.dirname(output_file_path))
+    with open(output_file_path, 'w') as outfile:
+        yaml.dump(args, outfile, sort_keys=False, default_flow_style=False)
 
     # ============ Preparing system configuration ... ============
     # Set gpu params and random seeds for reproducibility
@@ -110,8 +119,8 @@ def train_process(rank, args, start_training=True):
     # The aug_dataset is for training, while plain_datasets is mostly used to compute knn and visualize the embeddings
     transforms_aug = prepare_datasets.DataAugmentationDINO(
         augmentation_params['global_crops_scale'], augmentation_params['local_crops_scale'],
-        augmentation_params['local_crops_number'], augmentation_params['global_size'],
-        augmentation_params['local_size'])
+        augmentation_params['local_crops_number'], augmentation_params['full_size'],
+        augmentation_params['global_size'], augmentation_params['local_size'])
     transforms_plain = transforms_aug.transforms_plain
 
     start_time = time.time()
@@ -133,7 +142,7 @@ def train_process(rank, args, start_training=True):
     # In conjunction with torch.nn.parallel.DistributedDataParallel
     train_aug_sampler = torch.utils.data.DistributedSampler(train_aug_dataset, shuffle=True)
     train_plain_sampler = torch.utils.data.DistributedSampler(train_plain_dataset, shuffle=True)
-    val_plain_sampler = torch.utils.data.DistributedSampler(val_plain_dataset, shuffle=True)
+    val_plain_sampler = torch.utils.data.DistributedSampler(val_plain_dataset, shuffle=False)
 
     # Prepare the data for training with DataLoaders
     # pin_memory makes transferring images from CPU to GPU faster
@@ -185,8 +194,12 @@ def train_process(rank, args, start_training=True):
     # Log the number of trainable parameters in Tensorboard
     if rank==0:
         n_parameters_student = sum(p.numel() for p in student.parameters() if p.requires_grad)
-        print('Number of params of the student:', n_parameters_student)
-        writer.add_text("Number of params of the student", str(n_parameters_student))
+        print('Number of params of the entire student:', n_parameters_student)
+        writer.add_text("Number of params of the entire student", str(n_parameters_student))
+
+        n_parameters_student_backbone = sum(p.numel() for p in student.module.backbone.parameters() if p.requires_grad)
+        print('Number of params of the student backbone:', n_parameters_student_backbone)
+        writer.add_text("Number of params of the student backbone", str(n_parameters_student_backbone))
 
     # ============ Preparing loss ... ============
     # Move dino_loss to gpu
@@ -231,16 +244,15 @@ def train_process(rank, args, start_training=True):
     helper.restart_from_checkpoint(os.path.join(save_params['output_dir'], "checkpoint.pth"), run_variables=to_restore,
         student=student, teacher=teacher, optimizer=optimizer, fp16_scaler=fp16_scaler, dino_loss=dino_loss, )
 
-    if start_training:
+    if dataset_params['dataset_name'] == 'ImageNet':
+        use_cuda = False
+    else:
+        use_cuda = False
+
+    if start_training['mode']=="train":
         print("Starting DINO training !")
         # Record the starting time
         start_time = time.time()
-
-        if dataset_params['dataset_name'] == 'ImageNet':
-            use_cuda = False
-        else:
-            use_cuda = False
-
         if save_params['tb_logoriginal']:
             # ============ Adding embeddings in tensorboard before the training starts ... ============
             tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(student.module.backbone,
@@ -278,7 +290,7 @@ def train_process(rank, args, start_training=True):
             if rank==0:
                 writer.add_scalar("train_loss", train_stats['loss'], epoch)
             # Log the embeddings & KNN results in Tensorboard, at every tb_freq epoch
-            if save_params['tb_freq'] and epoch % save_params['tb_freq'] == 0:
+            if epoch % save_params['tb_freq'] == 0:
                 tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(student.module.backbone,
                                                                                          val_plain_dataloader,
                                                                                          label_mapping,
@@ -324,28 +336,65 @@ def train_process(rank, args, start_training=True):
         if rank==0:
             with (Path(save_params['output_dir']) / "log.txt").open("a") as f:
                 f.write(f"Training time from epoch {to_restore['epoch']} to epoch {training_params['num_epochs']}: " + total_time_str + "\n")
-    else:
+    elif start_training['mode']=="eval":
         epoch = to_restore['epoch']-1
+
         print("Starting DINO evaluation at epoch ", str(epoch))
         # Record the starting time
         start_time = time.time()
-        checkpoint = torch.load(os.path.join(save_params['output_dir'], f"checkpoint{epoch:04}.pth"))
+        if epoch == -1:
+            checkpoint = torch.load(os.path.join(save_params['output_dir'], f"checkpoint.pth"))
+        else:
+            checkpoint = torch.load(os.path.join(save_params['output_dir'], f"checkpoint{epoch:04}.pth"))
         student.load_state_dict(checkpoint['student'])
-        tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(student.module.backbone,
-                                                                                 val_plain_dataloader,
-                                                                                 label_mapping,
-                                                                                 return_tb=True,
-                                                                                 subset_size=100)
-        if rank==0:
-            writer.add_embedding(tb_embeddings, metadata=tb_metatdata, label_img=tb_label_img,
-                                 global_step=epoch, tag="embeddings_eval")
 
-        _, _, _, _ = knn_in_train_process(rank=rank, writer=writer, use_cuda=use_cuda, backbone=student, train_dataloader=train_plain_dataloader, val_dataloader=val_plain_dataloader,
-                             label_mapping=label_mapping, epoch=epoch, save_params=save_params, if_eval=True)
+        if start_training['eval']['if_embeddings']:
+            print("Adding embeddings in tensorboard...")
+            tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(student.module.backbone,
+                                                                                     val_plain_dataloader,
+                                                                                     label_mapping,
+                                                                                     return_tb=True,
+                                                                                     subset_size=100)
+            if rank==0:
+                writer.add_embedding(tb_embeddings, metadata=tb_metatdata, label_img=tb_label_img,
+                                     global_step=epoch, tag="embeddings_eval")
+        if start_training['eval']['if_knn']:
+            print("Adding knn results in tensorboard...")
+            train_embeddings, train_labels, val_embeddings, val_labels = knn_in_train_process(rank=rank, writer=writer, use_cuda=use_cuda, backbone=student,
+                                                                                              train_dataloader=train_plain_dataloader, val_dataloader=val_plain_dataloader,
+                                                                                              label_mapping=label_mapping, epoch=epoch, save_params=save_params, if_eval=True)
+            # If the script is in evaluation mode, we save the embeddings
+            if rank==0 and epoch == training_params['num_epochs']-1:
+                torch.save(train_embeddings.cpu(), os.path.join(save_params['output_dir'], f"trainembeddings{epoch:04}.pth"))
+                torch.save(val_embeddings.cpu(), os.path.join(save_params['output_dir'], f"valembeddings{epoch:04}.pth"))
+                torch.save(train_labels.cpu(), os.path.join(save_params['output_dir'], f"trainlabels{epoch:04}.pth"))
+                torch.save(val_labels.cpu(), os.path.join(save_params['output_dir'], f"vallabels{epoch:04}.pth"))
+
+        if start_training['eval']['if_throughput']:
+            print("Calculating throughput...")
+            assert system_params['gpu_ids'] == "0"
+            assert valloader_params['batch_size'] == 128
+
+            device = torch.device("cuda:0")
+            student.to(device)
+            with torch.no_grad():
+                for img, _, _ in val_plain_dataloader:
+                    break
+                total_time = 0
+                starter, ender = torch.cuda.Event(enable_timing=True),   torch.cuda.Event(enable_timing=True)
+                starter.record()
+                _ = student(img)
+                ender.record()
+                torch.cuda.synchronize()
+                curr_time = starter.elapsed_time(ender)/1000
+                total_time += curr_time
+            throughput = 128/total_time
+            print('Final Throughput: ', throughput)
+        
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        print('Evaludation time {}'.format(total_time_str))
-        
+        print('Evaluation time {}'.format(total_time_str))
+
 def main(rank, args):
     # Set up training
     train_process(rank, args, start_training=args['start_training'])
@@ -353,7 +402,7 @@ def main(rank, args):
 
 if __name__ == '__main__':
     # Read params and print them
-    args = parse_args(params_path='yaml/test_params.yaml')
+    args = parse_args(params_path='yaml/ViT-S-16.yaml')
 
     # Launch multi-gpu / distributed training
     helper.launch(main, args)
