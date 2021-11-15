@@ -40,12 +40,12 @@ def compute_embedding(backbone, dataloader, label_mapping, use_cuda=False, retur
             if use_cuda:
                 embeddings = embeddings.cuda(non_blocking=True)
             # print(f"Storing features into tensor of shape {embeddings.shape}")
-
-        if helper.is_main_process() and images is None:
-            images = torch.zeros(len(dataloader.dataset), img.shape[1], img.shape[2], img.shape[3])
-            if use_cuda:
-                images = images.cuda(non_blocking=True)
-            # print(f"Storing images into tensor of shape {images.shape}")
+        if return_tb:
+            if helper.is_main_process() and images is None:
+                images = torch.zeros(len(dataloader.dataset), img.shape[1], img.shape[2], img.shape[3])
+                if use_cuda:
+                    images = images.cuda(non_blocking=True)
+                # print(f"Storing images into tensor of shape {images.shape}")
 
         if helper.is_main_process() and labels is None:
             labels = torch.zeros(len(dataloader.dataset), lab.shape[-1])
@@ -65,19 +65,20 @@ def compute_embedding(backbone, dataloader, label_mapping, use_cuda=False, retur
         embs_all_reduce = torch.distributed.all_gather(embs_l, embs, async_op=True)
         embs_all_reduce.wait()
 
-        # Share images between processes
-        img_all = torch.empty(
-            dist.get_world_size(),
-            img.size(0),
-            img.size(1),
-            img.size(2),
-            img.size(3),
-            dtype=img.dtype,
-            device=img.device,
-        )
-        img_l = list(img_all.unbind(0))
-        img_all_reduce = torch.distributed.all_gather(img_l, img, async_op=True)
-        img_all_reduce.wait()
+        if return_tb:
+            # Share images between processes
+            img_all = torch.empty(
+                dist.get_world_size(),
+                img.size(0),
+                img.size(1),
+                img.size(2),
+                img.size(3),
+                dtype=img.dtype,
+                device=img.device,
+            )
+            img_l = list(img_all.unbind(0))
+            img_all_reduce = torch.distributed.all_gather(img_l, img, async_op=True)
+            img_all_reduce.wait()
 
         # Share labels between processes
         lab_all = torch.empty(
@@ -102,12 +103,15 @@ def compute_embedding(backbone, dataloader, label_mapping, use_cuda=False, retur
         if helper.is_main_process():
             if use_cuda:
                 embeddings.index_copy_(0, index_all, torch.cat(embs_l))
-                images.index_copy_(0, index_all, torch.cat(img_l))
                 labels.index_copy_(0, index_all, torch.cat(lab_l))
+                if return_tb:
+                    images.index_copy_(0, index_all, torch.cat(img_l))
             else:
                 embeddings.index_copy_(0, index_all.cpu(), torch.cat(embs_l).cpu())
-                images.index_copy_(0, index_all.cpu(), torch.cat(img_l).cpu())
                 labels.index_copy_(0, index_all.cpu(), torch.cat(lab_l).cpu())
+                if return_tb:
+                    images.index_copy_(0, index_all.cpu(), torch.cat(img_l).cpu())
+
 
     if helper.is_main_process():
         # if return_tb for tensorboard logging, returned labels contain real cls names such as "golf ball" etc
@@ -122,7 +126,10 @@ def compute_embedding(backbone, dataloader, label_mapping, use_cuda=False, retur
             labels = [metadata_labels[i] for i in subset_indices]
             images = torch.index_select(images, 0, torch.tensor(subset_indices, device=images.device))
     backbone.train()
-    return embeddings, images, labels
+    if return_tb:
+        return embeddings, images, labels
+    else:
+        return embeddings, labels
 
 @torch.no_grad()
 def knn_classifier(train_features, train_labels, test_features, test_labels, k, T, num_classes=1000):

@@ -1,9 +1,10 @@
 {
-"start_training": True, # If start_training is False, only the embedding and KNN results would be logged in Tensorboard
+"start_training": False, # If start_training is False, only the embedding and KNN results would be logged in Tensorboard
 "save_params": { "output_dir": "/storage/yue/dino_models/test/",
                  "restore_epoch": 0,
                  "saveckp_freq": 1,
-                 "tb_freq": 1, # frequency to save embeddings and knn results
+                 "tb_logoriginal": False, # Whether to log the embeddings and knn results before the training starts
+                 "tb_freq": 100, # Frequency to save embeddings and knn results
                  "nb_knn": [20],
                  "temp_knn": 0.07
                },

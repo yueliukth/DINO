@@ -44,11 +44,11 @@ def parse_args(params_path=None):
     print(json.dumps(args, indent=4))
     return args
 
-def knn_in_train_process(rank, writer, use_cuda, backbone, train_dataloader, val_dataloader, label_mapping, epoch, save_params, if_original=False):
+def knn_in_train_process(rank, writer, use_cuda, backbone, train_dataloader, val_dataloader, label_mapping, epoch, save_params, if_original=False, if_eval=False):
     knn_start_time = time.time()
-    train_embeddings, _, train_labels = evaluation.compute_embedding(backbone.module.backbone, train_dataloader,
+    train_embeddings, train_labels = evaluation.compute_embedding(backbone.module.backbone, train_dataloader,
                                                                      label_mapping, use_cuda=use_cuda, return_tb=False)
-    val_embeddings, _, val_labels = evaluation.compute_embedding(backbone.module.backbone, val_dataloader,
+    val_embeddings, val_labels = evaluation.compute_embedding(backbone.module.backbone, val_dataloader,
                                                                  label_mapping, use_cuda=use_cuda, return_tb=False)
     if rank==0:
         train_embeddings = nn.functional.normalize(train_embeddings, dim=1, p=2).cuda()
@@ -70,8 +70,14 @@ def knn_in_train_process(rank, writer, use_cuda, backbone, train_dataloader, val
                 writer.add_scalar(f"{k}nn_top1_original", top1, epoch)
                 writer.add_scalar(f"{k}nn_top5_original", top5, epoch)
             else:
-                writer.add_scalar(f"{k}nn_top1", top1, epoch)
-                writer.add_scalar(f"{k}nn_top5", top5, epoch)
+                if if_eval:
+                    writer.add_scalar(f"{k}nn_top1_eval", top1, epoch)
+                    writer.add_scalar(f"{k}nn_top5_eval", top5, epoch)
+                else:
+                    writer.add_scalar(f"{k}nn_top1", top1, epoch)
+                    writer.add_scalar(f"{k}nn_top5", top5, epoch)
+
+    return train_embeddings, train_labels, val_embeddings, val_labels
 
 def train_process(rank, args, start_training=True):
     # Define some parameters for easy access
@@ -225,28 +231,30 @@ def train_process(rank, args, start_training=True):
     helper.restart_from_checkpoint(os.path.join(save_params['output_dir'], "checkpoint.pth"), run_variables=to_restore,
         student=student, teacher=teacher, optimizer=optimizer, fp16_scaler=fp16_scaler, dino_loss=dino_loss, )
 
-    # Record the starting time
-    start_time = time.time()
-
-    # ============ Adding embeddings in tensorboard before the training starts ... ============
-    tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(student.module.backbone,
-                                                                             val_plain_dataloader, label_mapping,
-                                                                             return_tb=True, subset_size=100)
-    if rank==0:
-        writer.add_embedding(tb_embeddings, metadata=tb_metatdata, label_img=tb_label_img, global_step=to_restore['epoch'],
-                             tag="embeddings_original")
-
-    # ============ Adding knn results in tensorboard before the training starts ... ============
-    if dataset_params['dataset_name'] == 'ImageNet':
-        use_cuda = True
-    else:
-        use_cuda = False
-
-    knn_in_train_process(rank=rank, writer=writer, use_cuda=use_cuda, backbone=student, train_dataloader=train_plain_dataloader, val_dataloader=val_plain_dataloader,
-                         label_mapping=label_mapping, epoch=to_restore['epoch'], save_params=save_params, if_original=True)
-
     if start_training:
         print("Starting DINO training !")
+        # Record the starting time
+        start_time = time.time()
+
+        if dataset_params['dataset_name'] == 'ImageNet':
+            use_cuda = False
+        else:
+            use_cuda = False
+
+        if save_params['tb_logoriginal']:
+            # ============ Adding embeddings in tensorboard before the training starts ... ============
+            tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(student.module.backbone,
+                                                                                     val_plain_dataloader, label_mapping, use_cuda=use_cuda,
+                                                                                     return_tb=True, subset_size=100)
+            if rank==0:
+                writer.add_embedding(tb_embeddings, metadata=tb_metatdata, label_img=tb_label_img, global_step=to_restore['epoch'],
+                                     tag="embeddings_original")
+
+            # ============ Adding knn results in tensorboard before the training starts ... ============
+            _, _, _, _ = knn_in_train_process(rank=rank, writer=writer, use_cuda=use_cuda, backbone=student, train_dataloader=train_plain_dataloader, val_dataloader=val_plain_dataloader,
+                                 label_mapping=label_mapping, epoch=to_restore['epoch'], save_params=save_params, if_original=True)
+
+
         for epoch in range(to_restore['epoch'], training_params['num_epochs']):
             # In distributed mode, calling the :meth:`set_epoch` method at
             # the beginning of each epoch **before** creating the :class:`DataLoader` iterator
@@ -280,8 +288,17 @@ def train_process(rank, args, start_training=True):
                     writer.add_embedding(tb_embeddings, metadata=tb_metatdata, label_img=tb_label_img,
                                          global_step=epoch, tag="embeddings")
 
-                knn_in_train_process(rank=rank, writer=writer, use_cuda=use_cuda, backbone=student, train_dataloader=train_plain_dataloader, val_dataloader=val_plain_dataloader,
+
+
+                train_embeddings, train_labels, val_embeddings, val_labels = knn_in_train_process(rank=rank, writer=writer, use_cuda=use_cuda, backbone=student, train_dataloader=train_plain_dataloader, val_dataloader=val_plain_dataloader,
                                      label_mapping=label_mapping, epoch=epoch, save_params=save_params)
+                # If the current epoch is the last epoch, we save the embeddings 
+                if rank==0 and epoch == training_params['num_epochs']-1:
+                    torch.save(train_embeddings.cpu(), os.path.join(save_params['output_dir'], f"trainembeddings{epoch:04}.pth"))
+                    torch.save(val_embeddings.cpu(), os.path.join(save_params['output_dir'], f"valembeddings{epoch:04}.pth"))
+                    torch.save(train_labels.cpu(), os.path.join(save_params['output_dir'], f"trainlabels{epoch:04}.pth"))
+                    torch.save(val_labels.cpu(), os.path.join(save_params['output_dir'], f"vallabels{epoch:04}.pth"))
+
 
             # ============ Saving models and writing logs in log.txt file ... ============
             save_dict = {'student': student.state_dict(), 'teacher': teacher.state_dict(),
@@ -304,9 +321,31 @@ def train_process(rank, args, start_training=True):
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
         print('Training time {}'.format(total_time_str))
-        writer.add_text(f"Training time from epoch {to_restore['epoch']} to epoch {training_params['num_epochs']}", total_time_str)
+        if rank==0:
+            with (Path(save_params['output_dir']) / "log.txt").open("a") as f:
+                f.write(f"Training time from epoch {to_restore['epoch']} to epoch {training_params['num_epochs']}: " + total_time_str + "\n")
+    else:
+        epoch = to_restore['epoch']-1
+        print("Starting DINO evaluation at epoch ", str(epoch))
+        # Record the starting time
+        start_time = time.time()
+        checkpoint = torch.load(os.path.join(save_params['output_dir'], f"checkpoint{epoch:04}.pth"))
+        student.load_state_dict(checkpoint['student'])
+        tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(student.module.backbone,
+                                                                                 val_plain_dataloader,
+                                                                                 label_mapping,
+                                                                                 return_tb=True,
+                                                                                 subset_size=100)
+        if rank==0:
+            writer.add_embedding(tb_embeddings, metadata=tb_metatdata, label_img=tb_label_img,
+                                 global_step=epoch, tag="embeddings_eval")
 
-
+        _, _, _, _ = knn_in_train_process(rank=rank, writer=writer, use_cuda=use_cuda, backbone=student, train_dataloader=train_plain_dataloader, val_dataloader=val_plain_dataloader,
+                             label_mapping=label_mapping, epoch=epoch, save_params=save_params, if_eval=True)
+        total_time = time.time() - start_time
+        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+        print('Evaludation time {}'.format(total_time_str))
+        
 def main(rank, args):
     # Set up training
     train_process(rank, args, start_training=args['start_training'])
