@@ -1,7 +1,7 @@
 {"start_training": {"mode": "train", # "train" or "eval"
                     "eval": {"choices": ["if_linear", "if_knn"], # ["if_embeddings",  "if_knn", "if_linear", "if_throughput"]
                              "epoch": 99,
-                             "linear":{"batch_size": 512,
+                             "linear":{"batch_size": 1024,
                                         "num_epochs": 100,
                                         "n_last_blocks": 4,
                                         "avgpool_patchtokens": False,
