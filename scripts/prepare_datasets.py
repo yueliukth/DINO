@@ -157,6 +157,11 @@ class DataAugmentationDINO(object):
             transforms.CenterCrop(global_size),
             normalize])
 
+        self.transforms_plain_for_lineartrain = transforms.Compose([
+            transforms.RandomResizedCrop(global_size),
+            transforms.RandomHorizontalFlip(),
+            normalize])
+
         # first global crop
         self.global_transforms1 = transforms.Compose([
             transforms.RandomResizedCrop(global_size, scale=global_crops_scale, interpolation=Image.BICUBIC),

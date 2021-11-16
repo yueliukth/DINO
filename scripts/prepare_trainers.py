@@ -11,6 +11,48 @@ def get_optimizer(optimizer_choice, params_dict, lr, momentum):
         optimizer = helper.LARS(params_dict)  # to use with convnet and large batches
     return optimizer
 
+def linear_train_one_epoch(model, linear_classifier, optimizer, data_loader, epoch, n, avgpool, model_params):
+    linear_classifier.train()
+    metric_logger = helper.MetricLogger(delimiter="  ")
+    metric_logger.add_meter('lr', helper.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    header = 'Epoch: [{}]'.format(epoch)
+    for (inp, target) in metric_logger.log_every(iterable=data_loader, print_freq=100, header=header):
+        # Move to gpu
+        inp = inp.cuda(non_blocking=True)
+        target = target.cuda(non_blocking=True)
+
+        # Forward - we do not update the backbone
+        with torch.no_grad():
+            if "vit" in model_params['backbone_option']:
+                intermediate_output = model.get_intermediate_layers(inp, n)
+                output = torch.cat([x[:, 0] for x in intermediate_output], dim=-1)
+                if avgpool:
+                    output = torch.cat((output.unsqueeze(-1), torch.mean(intermediate_output[-1][:, 1:], dim=1).unsqueeze(-1)), dim=-1)
+                    output = output.reshape(output.shape[0], -1)
+            else:
+                output = model(inp)
+        output = linear_classifier(output)
+
+        # Compute cross entropy loss
+        loss = torch.nn.CrossEntropyLoss()(output, target)
+
+        # Compute the gradients
+        optimizer.zero_grad()
+        loss.backward()
+
+        # Step
+        optimizer.step()
+
+        # Log
+        torch.cuda.synchronize()
+        metric_logger.update(loss=loss.item())
+        metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+    # Gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    print("Averaged stats:", metric_logger)
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
+
 def kd_train_one_epoch(epoch, num_epochs,
                        student, teacher, teacher_without_ddp, defined_loss, data_loader,
                        optimizer, lr_schedule, wd_schedule, momentum_schedule,

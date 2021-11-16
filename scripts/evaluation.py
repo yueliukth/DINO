@@ -3,8 +3,67 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 import helper
+from helper import accuracy
+
+@torch.no_grad()
+def validate_network(val_loader, model, linear_classifier, n, avgpool, model_params):
+    linear_classifier.eval()
+    metric_logger = helper.MetricLogger(delimiter="  ")
+    header = 'Val:'
+    for inp, target, _ in metric_logger.log_every(val_loader, 20, header):
+        # Move to gpu
+        inp = inp.cuda(non_blocking=True)
+        target = target.cuda(non_blocking=True)
+
+        # Forward
+        with torch.no_grad():
+            if "vit" in model_params['backbone_option']:
+                intermediate_output = model.get_intermediate_layers(inp, n)
+                output = torch.cat([x[:, 0] for x in intermediate_output], dim=-1)
+                if avgpool:
+                    output = torch.cat((output.unsqueeze(-1), torch.mean(intermediate_output[-1][:, 1:], dim=1).unsqueeze(-1)), dim=-1)
+                    output = output.reshape(output.shape[0], -1)
+            else:
+                output = model(inp)
+        output = linear_classifier(output)
+        loss = nn.CrossEntropyLoss()(output, target)
+
+        if linear_classifier.module.num_labels >= 5:
+            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        else:
+            acc1, = accuracy(output, target, topk=(1,))
+
+        batch_size = inp.shape[0]
+        metric_logger.update(loss=loss.item())
+        metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
+        if linear_classifier.module.num_labels >= 5:
+            metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
+    if linear_classifier.module.num_labels >= 5:
+        print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
+              .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
+    else:
+        print('* Acc@1 {top1.global_avg:.3f} loss {losses.global_avg:.3f}'
+              .format(top1=metric_logger.acc1, losses=metric_logger.loss))
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
+class LinearClassifier(nn.Module):
+    """Linear layer to train on top of frozen features"""
+    def __init__(self, dim, num_labels=1000):
+        super(LinearClassifier, self).__init__()
+        self.num_labels = num_labels
+        self.linear = nn.Linear(dim, num_labels)
+        self.linear.weight.data.normal_(mean=0.0, std=0.01)
+        self.linear.bias.data.zero_()
+
+    def forward(self, x):
+        # flatten
+        x = x.view(x.size(0), -1)
+
+        # linear layer
+        return self.linear(x)
+    
+@torch.no_grad()
 def compute_embedding(backbone, dataloader, label_mapping, use_cuda=False, return_tb=False, subset_size=0):
     """Compute CLS embedding and prepare for TensorBoard.
      Parameters
