@@ -1,15 +1,15 @@
 {"start_training": {"mode": "train", # "train" or "eval"
                     "eval": {"choices": ["if_linear", "if_knn"], # ["if_embeddings",  "if_knn", "if_linear", "if_throughput"]
-                             "epoch": 1,
+                             "epoch": 99,
                              "linear":{"batch_size": 512,
-                                         "num_epochs": 100,
-                                         "n_last_blocks": 4,
-                                         "avgpool_patchtokens": False,
-                                         "lr": 0.001,
-                                         "momentum": 0.9,
-                                         "wd": 0,
-                                         "val_freq": 1,
-                                         "restore_epoch": 0,
+                                        "num_epochs": 100,
+                                        "n_last_blocks": 4,
+                                        "avgpool_patchtokens": False,
+                                        "lr": 0.001,
+                                        "momentum": 0.9,
+                                        "wd": 0,
+                                        "val_freq": 1,
+                                        "restore_epoch": 0,
                              }
                       }
   }, # Note that if if_throughput, there should be just 1 gpu visible and the batch size should be 128
