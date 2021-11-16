@@ -278,7 +278,7 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
         print('base_lr: ', base_lr)
         print('final_value: ', training_params['lr']['final_lr'])
         print('epochs: ', training_params['num_epochs_for_scheduler'])
-        print('niter_per_ep: ', niter_per_ep)
+        print('niter_per_ep: ', len(train_aug_dataset))
         print('warmup_epochs: ', training_params['lr']['warmup_epochs'])
         print('start_warmup_value: ', training_params['lr']['start_warmup_lr'],)
         print('Learning rate at epoch 9 should be :', lr_schedule[9*len(train_aug_dataset)], end='\n\n')
@@ -346,10 +346,8 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
             print(f"Training weight decay at epoch {epoch} is : {train_stats['wd']}")
             writer.add_scalar("train_wd", train_stats['wd'], epoch)
 
-
-
         # Log the embeddings & KNN results in Tensorboard, at every tb_freq epoch
-        if epoch % save_params['tb_freq'] == 0:
+        if epoch!=0 and epoch % save_params['tb_freq'] == 0:
             tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(teacher_without_ddp.backbone,
                                                                                      val_plain_dataloader,
                                                                                      label_mapping, return_tb=True,
@@ -600,8 +598,8 @@ def main(rank, args):
 
 if __name__ == '__main__':
     # Read params and print them
-    # args = parse_args(params_path='yaml/ViT-S-16.yaml')
-    args = parse_args(params_path='yaml/ViT-S-16-imagenette.yaml')
+    args = parse_args(params_path='yaml/ViT-S-16.yaml')
+    # args = parse_args(params_path='yaml/ViT-S-16-imagenette.yaml')
     # args = parse_args(params_path='yaml/ResNet50.yaml')
 
     # Launch multi-gpu / distributed training
