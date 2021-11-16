@@ -231,11 +231,12 @@ def prepare_data_model(rank, args):
         use_cuda = False
 
     return rank, writer, student, teacher, teacher_without_ddp, \
-           train_aug_dataloader, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, label_mapping, use_cuda
+           train_aug_dataloader, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, \
+           train_aug_dataset, label_mapping, use_cuda
 
 
 def train_process(rank, args, writer, student, teacher, teacher_without_ddp, train_aug_dataloader,
-                  train_plain_dataloader, val_plain_dataloader, label_mapping, use_cuda):
+                  train_plain_dataloader, val_plain_dataloader, train_aug_dataset, label_mapping, use_cuda):
 
     save_params, dataset_params, system_params, dataloader_params, model_params, \
     augmentation_params, training_params, trainloader_params, valloader_params = prepare_params(args)
@@ -266,18 +267,29 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
     # ============ Initialize schedulers ... ============
     # Linear scaling rule according to the paper below
     # "Accurate, large minibatch sgd: Training imagenet in 1 hour."
-    base_lr = training_params['lr']['base_lr'] * trainloader_params['batch_size'] / 256.
+    base_lr = training_params['lr']['base_lr'] * trainloader_params['batch_size_for_scheduler'] / 256.
     lr_schedule = helper.cosine_scheduler(base_value=base_lr, final_value=training_params['lr']['final_lr'],
-                                          epochs=training_params['num_epochs'], niter_per_ep=len(train_aug_dataset),
+                                          epochs=training_params['num_epochs_for_scheduler'], niter_per_ep=len(train_aug_dataset),
                                           warmup_epochs=training_params['lr']['warmup_epochs'],
                                           start_warmup_value=training_params['lr']['start_warmup_lr'], )
+
+    if rank == 0:
+        print()
+        print('base_lr: ', base_lr)
+        print('final_value: ', training_params['lr']['final_lr'])
+        print('epochs: ', training_params['num_epochs_for_scheduler'])
+        print('niter_per_ep: ', niter_per_ep)
+        print('warmup_epochs: ', training_params['lr']['warmup_epochs'])
+        print('start_warmup_value: ', training_params['lr']['start_warmup_lr'],)
+        print('Learning rate at epoch 9 should be :', lr_schedule[9*len(train_aug_dataset)], end='\n\n')
+
     wd_schedule = helper.cosine_scheduler(base_value=training_params['wd']['base_wd'],
                                           final_value=training_params['wd']['final_wd'],
-                                          epochs=training_params['num_epochs'], niter_per_ep=len(train_aug_dataset), )
+                                          epochs=training_params['num_epochs_for_scheduler'], niter_per_ep=len(train_aug_dataset), )
     # Momentum parameter is increased to 1. during training with a cosine schedule
     momentum_schedule = helper.cosine_scheduler(base_value=training_params['momentum']['base_momentum_teacher'],
                                                 final_value=training_params['momentum']['final_momentum_teacher'],
-                                                epochs=training_params['num_epochs'],
+                                                epochs=training_params['num_epochs_for_scheduler'],
                                                 niter_per_ep=len(train_aug_dataset))
     if rank == 0:
         print(f"Loss, optimizer and schedulers ready.")
@@ -327,7 +339,15 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
         # ============ Writing logs & adding representation embeddings & KNN results in tensorboard ... ============
         # Log the number of training loss in Tensorboard, at every epoch
         if rank == 0:
+            print('Training one epoch is done, start writting loss and learning rate in tensorboard...')
             writer.add_scalar("train_loss", train_stats['loss'], epoch)
+            print(f"Training learing rate at epoch {epoch} is : {train_stats['lr']}")
+            writer.add_scalar("train_lr", train_stats['lr'], epoch)
+            print(f"Training weight decay at epoch {epoch} is : {train_stats['wd']}")
+            writer.add_scalar("train_wd", train_stats['wd'], epoch)
+
+
+
         # Log the embeddings & KNN results in Tensorboard, at every tb_freq epoch
         if epoch % save_params['tb_freq'] == 0:
             tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(teacher_without_ddp.backbone,
@@ -386,6 +406,7 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
 def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_dataloader, teacher_without_ddp, start_training, dataset_params, model_params, save_params):
     if rank == 0:
         print("Start linear evaluation...")
+
     eval_linear = start_training['eval']['linear']
     # ============ Building model with linear classifier ... ============
     embed_dim = teacher_without_ddp.backbone.embed_dim * (eval_linear['n_last_blocks'] + int(eval_linear['avgpool_patchtokens']))
@@ -393,7 +414,6 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
         linear_classifier = evaluation.LinearClassifier(embed_dim, num_labels=1000)
     elif dataset_params['dataset_name'] == 'IMAGENETTE':
         linear_classifier = evaluation.LinearClassifier(embed_dim, num_labels=10)
-
     linear_classifier = linear_classifier.cuda()
     linear_classifier = nn.parallel.DistributedDataParallel(linear_classifier, device_ids=[rank])
 
@@ -415,6 +435,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
         weight_decay=eval_linear['wd'],
         )
     scheduler_linear = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_linear, eval_linear['num_epochs'])
+
     # ============ Optionally resume training ... ============
     to_restore_linear = {'epoch': eval_linear['restore_epoch'], "best_acc": 0.}
     helper.restart_from_checkpoint(os.path.join(save_params['output_dir'], "checkpoint_linear.pth"),
@@ -456,7 +477,6 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
         # ============ Saving models and writing logs in log.txt file ... ============
         save_dict_linear = {"epoch": epoch + 1, "state_dict": linear_classifier.state_dict(),
                             "optimizer": optimizer_linear.state_dict(), "scheduler": scheduler_linear.state_dict(), "best_acc": best_acc}
-
         if rank == 0:
             torch.save(save_dict_linear, os.path.join(save_params['output_dir'], f'checkpoint{epoch:04}_linear.pth'))
             with (Path(save_params['output_dir']) / "log_linear.txt").open("a") as f:
@@ -464,13 +484,14 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
     print("Training of the supervised linear classifier on frozen features completed.\n"
           "Top-1 test accuracy: {acc:.1f}".format(acc=best_acc))
     return writer
+
     
 def eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, \
                  label_mapping, use_cuda):
     start_training = args['start_training']
     save_params, dataset_params, system_params, dataloader_params, model_params, \
     augmentation_params, training_params, trainloader_params, valloader_params = prepare_params(args)
-   
+
     epoch = int(start_training['eval']['epoch'])
     print("Starting DINO evaluation at epoch ", str(epoch))
 
@@ -566,12 +587,12 @@ def main(rank, args):
     # Define system configuration
     # Prepare data, model, loss, optimizer etc
     rank, writer, student, teacher, teacher_without_ddp,\
-    train_aug_dataloader, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, label_mapping, use_cuda = prepare_data_model(rank, args)
+    train_aug_dataloader, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, train_aug_dataset, label_mapping, use_cuda = prepare_data_model(rank, args)
 
     if args['start_training']['mode'] == "train":
         # Start training
         train_process(rank, args, writer, student, teacher, teacher_without_ddp, train_aug_dataloader,
-                      train_plain_dataloader, val_plain_dataloader, label_mapping, use_cuda)
+                      train_plain_dataloader, val_plain_dataloader, train_aug_dataset, label_mapping, use_cuda)
     elif args['start_training']['mode'] == "eval":
         # Start evaluation
         eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, label_mapping, use_cuda)
