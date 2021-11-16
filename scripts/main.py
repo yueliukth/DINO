@@ -290,7 +290,7 @@ def train_process(rank, args, start_training=True):
             if rank==0:
                 writer.add_scalar("train_loss", train_stats['loss'], epoch)
             # Log the embeddings & KNN results in Tensorboard, at every tb_freq epoch
-            if epoch % save_params['tb_freq'] == 0:
+            if epoch!=0 and epoch % save_params['tb_freq'] == 0:
                 tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(student.module.backbone,
                                                                                          val_plain_dataloader,
                                                                                          label_mapping,
@@ -299,8 +299,6 @@ def train_process(rank, args, start_training=True):
                 if rank==0:
                     writer.add_embedding(tb_embeddings, metadata=tb_metatdata, label_img=tb_label_img,
                                          global_step=epoch, tag="embeddings")
-
-
 
                 train_embeddings, train_labels, val_embeddings, val_labels = knn_in_train_process(rank=rank, writer=writer, use_cuda=use_cuda, backbone=student, train_dataloader=train_plain_dataloader, val_dataloader=val_plain_dataloader,
                                      label_mapping=label_mapping, epoch=epoch, save_params=save_params)
@@ -402,7 +400,8 @@ def main(rank, args):
 
 if __name__ == '__main__':
     # Read params and print them
-    args = parse_args(params_path='yaml/ViT-S-16.yaml')
+    #args = parse_args(params_path='yaml/ViT-S-16.yaml')
+    args = parse_args(params_path='yaml/ResNet50.yaml')
 
     # Launch multi-gpu / distributed training
     helper.launch(main, args)
