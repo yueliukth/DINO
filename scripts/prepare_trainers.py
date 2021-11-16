@@ -52,13 +52,16 @@ def linear_train_one_epoch(model, linear_classifier, optimizer, data_loader, epo
     print("Averaged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
-
 def kd_train_one_epoch(epoch, num_epochs,
                        student, teacher, teacher_without_ddp, defined_loss, data_loader,
                        optimizer, lr_schedule, wd_schedule, momentum_schedule,
                        clip_grad, freeze_last_layer, fp16_scaler):
     metric_logger = helper.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}/{}]'.format(epoch, num_epochs)
+    for i in range(10):
+        print(f'At epoch {i}, the learning rate should be {lr_schedule[i*len(data_loader)]} according to the scheduler.')
+    print()
+
     for it, (images, _) in enumerate(metric_logger.log_every(iterable=data_loader, print_freq=100, header=header)):
         # Update weight decay and learning rate according to their schedule
         it = len(data_loader) * epoch + it  # global training iteration

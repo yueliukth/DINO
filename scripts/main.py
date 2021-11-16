@@ -232,11 +232,11 @@ def prepare_data_model(rank, args):
 
     return rank, writer, student, teacher, teacher_without_ddp, \
            train_aug_dataloader, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, \
-           train_aug_dataset, label_mapping, use_cuda
+           label_mapping, use_cuda
 
 
 def train_process(rank, args, writer, student, teacher, teacher_without_ddp, train_aug_dataloader,
-                  train_plain_dataloader, val_plain_dataloader, train_aug_dataset, label_mapping, use_cuda):
+                  train_plain_dataloader, val_plain_dataloader, label_mapping, use_cuda):
 
     save_params, dataset_params, system_params, dataloader_params, model_params, \
     augmentation_params, training_params, trainloader_params, valloader_params = prepare_params(args)
@@ -269,7 +269,7 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
     # "Accurate, large minibatch sgd: Training imagenet in 1 hour."
     base_lr = training_params['lr']['base_lr'] * trainloader_params['batch_size_for_scheduler'] / 256.
     lr_schedule = helper.cosine_scheduler(base_value=base_lr, final_value=training_params['lr']['final_lr'],
-                                          epochs=training_params['num_epochs_for_scheduler'], niter_per_ep=len(train_aug_dataset),
+                                          epochs=training_params['num_epochs_for_scheduler'], niter_per_ep=len(train_aug_dataloader),
                                           warmup_epochs=training_params['lr']['warmup_epochs'],
                                           start_warmup_value=training_params['lr']['start_warmup_lr'], )
 
@@ -278,19 +278,20 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
         print('base_lr: ', base_lr)
         print('final_value: ', training_params['lr']['final_lr'])
         print('epochs: ', training_params['num_epochs_for_scheduler'])
-        print('niter_per_ep: ', len(train_aug_dataset))
+        print('niter_per_ep: ', len(train_aug_dataloader))
         print('warmup_epochs: ', training_params['lr']['warmup_epochs'])
         print('start_warmup_value: ', training_params['lr']['start_warmup_lr'],)
-        print('Learning rate at epoch 9 should be :', lr_schedule[9*len(train_aug_dataset)], end='\n\n')
+        print('Learning rate at epoch 9 should be :', lr_schedule[9*len(train_aug_dataloader)], end='\n\n')
 
     wd_schedule = helper.cosine_scheduler(base_value=training_params['wd']['base_wd'],
                                           final_value=training_params['wd']['final_wd'],
-                                          epochs=training_params['num_epochs_for_scheduler'], niter_per_ep=len(train_aug_dataset), )
+                                          epochs=training_params['num_epochs_for_scheduler'], niter_per_ep=len(train_aug_dataloader), )
+
     # Momentum parameter is increased to 1. during training with a cosine schedule
     momentum_schedule = helper.cosine_scheduler(base_value=training_params['momentum']['base_momentum_teacher'],
                                                 final_value=training_params['momentum']['final_momentum_teacher'],
                                                 epochs=training_params['num_epochs_for_scheduler'],
-                                                niter_per_ep=len(train_aug_dataset))
+                                                niter_per_ep=len(train_aug_dataloader))
     if rank == 0:
         print(f"Loss, optimizer and schedulers ready.")
 
@@ -584,13 +585,15 @@ def main(rank, args):
     # Set up Tensorboard Summarywriter for logging
     # Define system configuration
     # Prepare data, model, loss, optimizer etc
-    rank, writer, student, teacher, teacher_without_ddp,\
-    train_aug_dataloader, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, train_aug_dataset, label_mapping, use_cuda = prepare_data_model(rank, args)
+
+    rank, writer, student, teacher, teacher_without_ddp, \
+    train_aug_dataloader, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, \
+    label_mapping, use_cuda = prepare_data_model(rank, args)
 
     if args['start_training']['mode'] == "train":
         # Start training
-        train_process(rank, args, writer, student, teacher, teacher_without_ddp, train_aug_dataloader,
-                      train_plain_dataloader, val_plain_dataloader, train_aug_dataset, label_mapping, use_cuda)
+        train_process(rank, args, writer, student, teacher, teacher_without_ddp,
+                      train_aug_dataloader, train_plain_dataloader, val_plain_dataloader, label_mapping, use_cuda)
     elif args['start_training']['mode'] == "eval":
         # Start evaluation
         eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, label_mapping, use_cuda)
