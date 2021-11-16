@@ -2,65 +2,65 @@
                     "eval": {"if_embeddings": False,
                              "if_knn": False,
                              "if_throughput": False}}, # Note that if if_throughput, there should be just 1 gpu visible and the batch size should be 128
-"save_params": { "output_dir": "/storage/yue/dino_models/ResNet50/",
+"save_params": { "output_dir": "/storage/yue/dino_models/ViT-S-16-IMAGENETTE/",
                  "restore_epoch": 0,
                  "saveckp_freq": 1,
-                 "tb_logoriginal": False, # Whether to log the embeddings and knn results before the training starts
-                 "tb_freq": 101, # Frequency to save embeddings and knn results
+                 "tb_logoriginal": True, # Whether to log the embeddings and knn results before the training starts
+                 "tb_freq": 1, # Frequency to save embeddings and knn results
                  "nb_knn": [20],
                  "temp_knn": 0.07
                },
-"dataset_params": { "dataset_name": "ImageNet", # "ImageNet", "IMAGENETTE"
+"dataset_params": { "dataset_name": "IMAGENETTE", # "ImageNet", "IMAGENETTE"
                     "data_folder": "/storage/yue/data/",
                   },
-"dataloader_params": {"trainloader":{"batch_size": 512,
+"dataloader_params": {"trainloader":{"batch_size": 16,
                                      "num_workers": 10, # 'Number of data loading workers per GPU.'
                                      "pin_memory": True,
                                      "drop_last": True},
-                      "valloader": { "batch_size": 512,
+                      "valloader": { "batch_size": 16,
                                      "num_workers": 10, # 'Number of data loading workers per GPU.'
                                      "pin_memory": False,
                                      "drop_last": False}
                      },
-"augmentation_params": {"global_crops_scale": [0.14, 1.0], # [0.25, 1.0] for vit_small, [0.14, 1.0] for resnet50
-                        "local_crops_scale":  [0.05, 0.14], # [0.05, 0.25] for vit_small,  [0.05, 0.14] for resnet50
-                        "local_crops_number": 6, # 10 for vit_small, 6 for resnet50
+"augmentation_params": {"global_crops_scale": [0.25, 1.0],
+                        "local_crops_scale": [0.05, 0.25],
+                        "local_crops_number": 10,
                         "full_size": 256,
                         "global_size": 224,
                         "local_size": 96,
                        },
-"model_params": {"backbone_option":  "resnet50", # 'vit_tiny', 'vit_small', 'vit_base', 'resnet50', 'deit_tiny', 'deit_small'
+"model_params": {"backbone_option":  "vit_small", # 'vit_tiny', 'vit_small', 'vit_base', 'resnet50', 'deit_tiny', 'deit_small'
                  "patch_size": 16,
                  "drop_path_rate": 0.1,
-                 "out_dim": 60000, # 65536 for vit_small and 60000 for resnet50; "Dimensionality of the DINO head output. For complex and large datasets large values (like 65k) work well."
-                 "use_bn_in_head": True, # False for vit_small, True for resnet50; "Whether to use batch normalizations in projection head (Default: False)"
-                 "norm_last_layer": True, # False for vit_small, True for resnet50; "Whether or not to weight normalize the last layer of the DINO head.
+                 "out_dim": 65536, # "Dimensionality of the DINO head output. For complex and large datasets large values (like 65k) work well."
+                 "use_bn_in_head": False, # "Whether to use batch normalizations in projection head (Default: False)"
+                 "norm_last_layer": False, # "Whether or not to weight normalize the last layer of the DINO head.
                  # Not normalizing leads to better performance but can make the training unstable.
                  # In our experiments, we typically set this paramater to False with vit_small and True with vit_base."
                 },
-"training_params": {"num_epochs": 100,
+"training_params": {"num_epochs": 2,
                     "warmup_teacher_temp": 0.04,
                     "teacher_temp": 0.07, # """Final value (after linear warmup)
 #                                         # of the teacher temperature. For most experiments, anything above 0.07 is unstable. We recommend
 #                                         # starting with the default value of 0.04 and increase this slightly if needed."""
-                    "warmup_teacher_temp_epochs": 50, # 30 for vit_small, 50 for resnet50
+                    "warmup_teacher_temp_epochs": 0,
                     "student_temp": 0.1,
                     "center_momentum": 0.9,
-                    "optimizer": {"name": "lars", # adamw, sgd, lars; "adamw" for vit_small, "lars" for resnet50
+                    "optimizer": {"name": "adamw", # adamw, sgd
                                   "sgd": { "lr": 0, "momentum": 0.9}},
-                    "lr":{"base_lr": 0.3, # 0.0005 for vit_small, 0.3 for resnet50
-                          "final_lr": 0.0048, # 0.00001 for vit_small, 0.0048 for resnet
-                          "warmup_epochs": 10,
+                    "lr":{"base_lr": 0.0005,
+                          "final_lr": 0.00001,
+                          "warmup_epochs": 0,
                           "start_warmup_lr": 0},
-                    "wd":{"base_wd": 0.000001, # 0.04 for vit_small, 0.000001 for resnet50
-                          "final_wd": 0.000001}, # 0.4 for vit_small, 0.000001 for resnet50
+                    "wd":{"base_wd": 0.04,
+                          "final_wd": 0.4},
                     "momentum": {"base_momentum_teacher": 0.996,
                                  "final_momentum_teacher": 1},
                     "clip_grad": 0,
                     "freeze_last_layer": 1,
                     },
-"system_params": {"num_gpus": 8,
-                  "gpu_ids": "0,1,2,3,4,5,6,7",
+"system_params": {"num_gpus": 2,
+                  "gpu_ids": "0,1",
                   "random_seed": 0,
                   "use_fp16": False # """Whether or not to use half precision for training. Improves training time and memory requirements,
                                     #  but can provoke instability and slight decay of performance. We recommend disabling
