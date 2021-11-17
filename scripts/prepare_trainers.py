@@ -2,71 +2,21 @@ import math
 import torch
 import helper
 
-def get_optimizer(optimizer_choice, params_dict, lr, momentum):
-    if optimizer_choice == "adamw":
-        optimizer = torch.optim.AdamW(params_dict)  # to use with ViTs
-    elif optimizer_choice == "sgd":
-        optimizer = torch.optim.SGD(params_dict, lr=lr, momentum=momentum)  # lr is set by scheduler
-    elif optimizer_choice == "lars":
-        optimizer = helper.LARS(params_dict)  # to use with convnet and large batches
-    return optimizer
-
-def linear_train_one_epoch(model, linear_classifier, optimizer, data_loader, epoch, n, avgpool, model_params):
-    linear_classifier.train()
-    metric_logger = helper.MetricLogger(delimiter="  ")
-    metric_logger.add_meter('lr', helper.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    header = 'Epoch: [{}]'.format(epoch)
-    for (inp, target) in metric_logger.log_every(iterable=data_loader, print_freq=20, header=header):
-        # Move to gpu
-        inp = inp.cuda(non_blocking=True)
-        target = target.cuda(non_blocking=True)
-
-        # Forward - we do not update the backbone
-        with torch.no_grad():
-            if "vit" in model_params['backbone_option']:
-                intermediate_output = model.get_intermediate_layers(inp, n)
-                output = torch.cat([x[:, 0] for x in intermediate_output], dim=-1)
-                if avgpool:
-                    output = torch.cat((output.unsqueeze(-1), torch.mean(intermediate_output[-1][:, 1:], dim=1).unsqueeze(-1)), dim=-1)
-                    output = output.reshape(output.shape[0], -1)
-            else:
-                output = model(inp)
-        output = linear_classifier(output)
-
-        # Compute cross entropy loss
-        loss = torch.nn.CrossEntropyLoss()(output, target)
-
-        # Compute the gradients
-        optimizer.zero_grad()
-        loss.backward()
-
-        # Step
-        optimizer.step()
-
-        # Log
-        torch.cuda.synchronize()
-        metric_logger.update(loss=loss.item())
-        metric_logger.update(lr=optimizer.param_groups[0]["lr"])
-    # Gather the stats from all processes
-    metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger)
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-
 def kd_train_one_epoch(epoch, num_epochs,
                        student, teacher, teacher_without_ddp, defined_loss, data_loader,
                        optimizer, lr_schedule, wd_schedule, momentum_schedule,
                        clip_grad, freeze_last_layer, fp16_scaler):
     metric_logger = helper.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}/{}]'.format(epoch, num_epochs)
-    if helper.is_main_process():
-        for print_epoch in range(10):
-            print(f'At epoch {print_epoch}, the learning rate should be {lr_schedule[print_epoch*len(data_loader)]} according to the scheduler.')
-        print()
+    # if helper.is_main_process():
+    #     for print_epoch in range(10):
+    #         print(f'At epoch {print_epoch}, the learning rate should be {lr_schedule[print_epoch*len(data_loader)]} according to the scheduler.')
+    #     print()
     # optimizer.param_groups starts with [{'params': regularized}, {'params': not_regularized, 'weight_decay': 0.}]
     # optimizer.param_groups[0].keys(): dict_keys(['params', 'lr', 'betas', 'eps', 'weight_decay', 'amsgrad'])
     # optimizer.param_groups[1].keys(): dict_keys(['params', 'weight_decay', 'lr', 'betas', 'eps', 'amsgrad'])
 
-    for it, (images, _) in enumerate(metric_logger.log_every(iterable=data_loader, print_freq=20, header=header)):
+    for it, (images, labels) in enumerate(metric_logger.log_every(iterable=data_loader, print_freq=20, header=header)):
         # Update weight decay and learning rate according to their schedule
         it = len(data_loader) * epoch + it  # global training iteration
         for i, param_group in enumerate(optimizer.param_groups):
@@ -127,3 +77,53 @@ def kd_train_one_epoch(epoch, num_epochs,
     max_stats =  {k: meter.max for k, meter in metric_logger.meters.items()}
     value_stats =  {k: meter.value for k, meter in metric_logger.meters.items()}
     return global_avg_stats, median_stats, avg_stats, max_stats, value_stats
+
+def get_optimizer(optimizer_choice, params_dict, lr, momentum):
+    if optimizer_choice == "adamw":
+        optimizer = torch.optim.AdamW(params_dict)  # to use with ViTs
+    elif optimizer_choice == "sgd":
+        optimizer = torch.optim.SGD(params_dict, lr=lr, momentum=momentum)  # lr is set by scheduler
+    elif optimizer_choice == "lars":
+        optimizer = helper.LARS(params_dict)  # to use with convnet and large batches
+    return optimizer
+
+def linear_train_one_epoch(model, linear_classifier, optimizer, data_loader, epoch, n, avgpool, model_params):
+    linear_classifier.train()
+    metric_logger = helper.MetricLogger(delimiter="  ")
+    metric_logger.add_meter('lr', helper.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    header = 'Epoch: [{}]'.format(epoch)
+    for (inp, target) in metric_logger.log_every(iterable=data_loader, print_freq=20, header=header):
+        # Move to gpu
+        inp = inp.cuda(non_blocking=True)
+        target = target.cuda(non_blocking=True)
+
+        # Forward - we do not update the backbone
+        with torch.no_grad():
+            if "vit" in model_params['backbone_option']:
+                intermediate_output = model.get_intermediate_layers(inp, n)
+                output = torch.cat([x[:, 0] for x in intermediate_output], dim=-1)
+                if avgpool:
+                    output = torch.cat((output.unsqueeze(-1), torch.mean(intermediate_output[-1][:, 1:], dim=1).unsqueeze(-1)), dim=-1)
+                    output = output.reshape(output.shape[0], -1)
+            else:
+                output = model(inp)
+        output = linear_classifier(output)
+
+        # Compute cross entropy loss
+        loss = torch.nn.CrossEntropyLoss()(output, target)
+
+        # Compute the gradients
+        optimizer.zero_grad()
+        loss.backward()
+
+        # Step
+        optimizer.step()
+
+        # Log
+        torch.cuda.synchronize()
+        metric_logger.update(loss=loss.item())
+        metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+    # Gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    print("Averaged stats:", metric_logger)
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}

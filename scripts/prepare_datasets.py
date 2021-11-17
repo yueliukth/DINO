@@ -17,6 +17,10 @@ class ReturnIndexDataset(datasets.ImageFolder):
     def __getitem__(self, idx):
         img, lab = super(ReturnIndexDataset, self).__getitem__(idx)
         return img, lab, idx
+class ReturnIndexDatasetCIFAR100(datasets.CIFAR100):
+    def __getitem__(self, idx):
+        img, lab = super(ReturnIndexDatasetCIFAR100, self).__getitem__(idx)
+        return img, lab, idx
 
 class GetDatasets():
     def __init__(self, dataset_params):
@@ -25,49 +29,63 @@ class GetDatasets():
         self.dataset_name = dataset_params['specification']['dataset_name']
         self.use_cuda = dataset_params['specification'][self.dataset_name]['knn_use_cuda']
         label_mapping_path = dataset_params['specification'][self.dataset_name]['label_mapping_path']
-        f = open(label_mapping_path)
-        self.label_mapping = json.load(f)
+        if os.path.exists(label_mapping_path):
+            f = open(label_mapping_path)
+            self.label_mapping = json.load(f)
+        else:
+            self.label_mapping = None
 
     def get_datasets(self, official_split, transforms, include_index=False):
         #transforms = ToTensor()
-        if self.dataset_name == 'ImageNet':
-            # Train: 1,281,167 images
-            # Val: 50,000 images
-            # Test: 100,000 images
-            target_path = os.path.join(self.data_folder, 'imagenet/ILSVRC/Data/CLS-LOC/')
-        elif self.dataset_name == 'IMAGENETTE':
-            # Train: 9,469 images
-            # Val: 3,925 images
-            target_path = os.path.join(self.data_folder, "imagenette2")
-            target_path = os.path.abspath(target_path)
-            if not os.path.exists(target_path) or len(os.listdir(target_path)) == 0:
-                # If IMAGENETTE does not exist in data folder, we download it with fastai
-                path = untar_data(URLs.IMAGENETTE)
-                if not os.path.exists(os.path.dirname(target_path)):
-                    os.makedirs(os.path.dirname(target_path))
-                # Copy data folder from .fastai/data to our local DINO folder
-                shutil.copytree(path, target_path)
-        if include_index:
-            dataset = ReturnIndexDataset(os.path.join(target_path, official_split), transform=transforms)
-        else:
-            dataset = ImageFolder(os.path.join(target_path, official_split), transform=transforms)
+        if self.dataset_name in ['ImageNet', 'IMAGENETTE']:
+            if self.dataset_name == 'ImageNet':
+                # Train: 1,281,167 images
+                # Val: 50,000 images
+                # Test: 100,000 images
+                target_path = os.path.join(self.data_folder, 'imagenet/ILSVRC/Data/CLS-LOC/')
+            elif self.dataset_name == 'IMAGENETTE':
+                # Train: 9,469 images
+                # Val: 3,925 images
+                target_path = os.path.join(self.data_folder, "imagenette2")
+                target_path = os.path.abspath(target_path)
+                if not os.path.exists(target_path) or len(os.listdir(target_path)) == 0:
+                    # If IMAGENETTE does not exist in data folder, we download it with fastai
+                    path = untar_data(URLs.IMAGENETTE)
+                    if not os.path.exists(os.path.dirname(target_path)):
+                        os.makedirs(os.path.dirname(target_path))
+                    # Copy data folder from .fastai/data to our local DINO folder
+                    shutil.copytree(path, target_path)
+            if include_index:
+                dataset = ReturnIndexDataset(os.path.join(target_path, official_split), transform=transforms)
+            else:
+                dataset = ImageFolder(os.path.join(target_path, official_split), transform=transforms)
+        elif self.dataset_name in ['CIFAR10', 'CIFAR100']:
+            if self.dataset_name == 'CIFAR10':
+                # Train: 50,000 images
+                # Test: 10,000 images
+                # We consider the test set of CIFAR10 as validation set in our task
+                dataset = datasets.CIFAR10(
+                    root=self.data_folder,
+                    train=(official_split == 'train/'),
+                    download=True,
+                    transform=transforms)
+            elif self.dataset_name == 'CIFAR100':
+                # Train: 50,000 images
+                # Test: 10,000 images
+                # We consider the test set of CIFAR100 as validation set in our task
+                if include_index:
+                    dataset = ReturnIndexDatasetCIFAR100(
+                        root=self.data_folder,
+                        train=(official_split == 'train/'),
+                        download=True,
+                        transform=transforms)
+                else:
+                    dataset = datasets.CIFAR100(
+                        root=self.data_folder,
+                        train=(official_split == 'train/'),
+                        download=True,
+                        transform=transforms)
 
-        # elif self.dataset_name == 'FashionMNIST':
-        #     # Train: 60,000 images
-        #     # Test: 10,000 images
-        #     # We consider the test set of FashionMNIST as validation set in our task
-        #     if official_split == 'train':
-        #         dataset = datasets.FashionMNIST(
-        #         root=self.data_folder,
-        #         train=True,
-        #         download=True,
-        #         transform=transforms)
-        #     else:
-        #         dataset = datasets.FashionMNIST(
-        #         root=self.data_folder,
-        #         train=False,
-        #         download=True,
-        #         transform=transforms)
         if helper.is_main_process():
             print(f"There are {len(dataset)} images in {official_split} split, on each rank. ")
         return dataset

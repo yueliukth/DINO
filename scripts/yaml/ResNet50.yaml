@@ -21,14 +21,21 @@
                  "nb_knn": [20],
                  "temp_knn": 0.07
                },
-"dataset_params": {"data_folder": "/storage/yue/data/",
-                   "specification": { "dataset_name": "ImageNet",  # "ImageNet", "IMAGENETTE"
-                                      "ImageNet":{ "num_labels": 1000,
+ "dataset_params": {"data_folder": "/storage/yue/data/",
+                    "specification": { "dataset_name": "CIFAR100",  # "ImageNet", "IMAGENETTE", "CIFAR10", "CIFAR100"
+                                       "ImageNet":{ "num_labels": 1000,
                                                     "knn_use_cuda": False,
-                                                    "label_mapping_path": 'data_label_mapping/ImageNet.json'}
-                                      "IMAGENETTE":{ "num_labels": 10,
-                                                      "knn_use_cuda": False
-                                                      "label_mapping_path": 'data_label_mapping/ImageNet.json'}
+                                                    "label_mapping_path": 'data_label_mapping/ImageNet.json'},
+                                       "IMAGENETTE":{ "num_labels": 10,
+                                                      "knn_use_cuda": False,
+                                                      "label_mapping_path": 'data_label_mapping/ImageNet.json'},
+                                       "CIFAR10": { "num_labels": 10,
+                                                    "knn_use_cuda": False,
+                                                    "label_mapping_path": 'data_label_mapping/CIFAR10.json' },
+                                       "CIFAR100": { "num_labels": 100,
+                                                     "knn_use_cuda": False,
+                                                     "label_mapping_path": 'data_label_mapping/CIFAR100.json' },
+
                     }
  },
 "dataloader_params": {"trainloader":{"batch_size": 512,

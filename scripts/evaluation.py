@@ -85,7 +85,6 @@ def compute_embedding(backbone, dataloader, label_mapping, use_cuda=False, retur
     embeddings = None
     images = None
     labels = None
-
     for img, lab, index in dataloader:
         img = img.cuda(non_blocking=True)
         img = (img * 0.224) + 0.45 # undo norm
@@ -177,10 +176,20 @@ def compute_embedding(backbone, dataloader, label_mapping, use_cuda=False, retur
         # Otherwise, return dataset labels [0, 1, ...]
         if return_tb and subset_size!=0:
             labels = [dataloader.dataset.classes[int(i)] for i in labels.view(1,-1)[0].tolist()]
+    
+            dataloader_classes_list = list(dataloader.dataset.classes)
+            dataloader_classes_list.sort()
+            label_mapping_classes_list = list(label_mapping.values())
+            label_mapping_classes_list.sort()
+            if dataloader_classes_list == label_mapping_classes_list:
+                metadata_labels = labels
+            else:
+                metadata_labels = [label_mapping[l] for l in labels]
+
             indices = np.arange(len(labels))
             np.random.shuffle(indices)
             subset_indices = indices[:subset_size]
-            metadata_labels = [label_mapping[l] for l in labels]
+
             embeddings = torch.index_select(embeddings, 0, torch.tensor(subset_indices, device=embeddings.device))
             labels = [metadata_labels[i] for i in subset_indices]
             images = torch.index_select(images, 0, torch.tensor(subset_indices, device=images.device))

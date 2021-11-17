@@ -394,7 +394,7 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
                 f.write(json.dumps(train_value_log) + "\n")
 
         # Log the embeddings & KNN results in Tensorboard, at every tb_freq epoch
-        if epoch!=0 and epoch % save_params['tb_freq'] == 0:
+        if (epoch!=0 and epoch % save_params['tb_freq'] == 0) or (epoch == training_params['num_epochs'] - 1):
             tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(teacher_without_ddp.backbone,
                                                                                      val_plain_dataloader,
                                                                                      label_mapping, return_tb=True,
@@ -412,7 +412,7 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
                                                                                               epoch=epoch,
                                                                                               save_params=save_params)
             # If the current epoch is the last epoch, we save the embeddings
-            if rank == 0 and epoch == training_params['num_epochs'] - 1:
+            if rank == 0 and epoch == training_params['num_epochs']-1:
                 torch.save(train_embeddings.cpu(),
                            os.path.join(save_params['output_dir'], f"trainembeddings{epoch:04}.pth"))
                 torch.save(val_embeddings.cpu(),
@@ -641,7 +641,7 @@ def main(rank, args):
 if __name__ == '__main__':
     # Read params and print them
     #args = parse_args(params_path='yaml/ViT-S-16.yaml')
-    args = parse_args(params_path='yaml/ViT-S-16-imagenette.yaml')
+    args = parse_args(params_path='yaml/ViT-S-16-CIFAR100.yaml')
     # args = parse_args(params_path='yaml/ResNet50.yaml')
 
     # Launch multi-gpu / distributed training

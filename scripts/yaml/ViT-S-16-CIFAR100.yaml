@@ -1,49 +1,49 @@
 {"start_training": {"mode": "train", # "train" or "eval"
-                    "eval": {"choices": ["if_linear", "if_knn"], # ["if_embeddings",  "if_knn", "if_linear", "if_throughput"]
-                             "epoch": 99,
+                    "eval": {"choices": ["if_linear"], # ["if_embeddings",  "if_knn", "if_linear", "if_throughput"]
+                             "epoch": 0,
                              "linear":{"batch_size": 1024,
-                                        "num_epochs": 100,
-                                        "n_last_blocks": 4,
-                                        "avgpool_patchtokens": False,
-                                        "lr": 0.001,
-                                        "momentum": 0.9,
-                                        "wd": 0,
-                                        "val_freq": 1,
-                                        "restore_epoch": 0,
-                             }
-                      }
-  }, # Note that if if_throughput, there should be just 1 gpu visible and the batch size should be 128
-"save_params": { "output_dir": "/storage/yue/dino_models/ViT-S-16/",
+                                       "num_epochs": 100,
+                                       "n_last_blocks": 4,
+                                       "avgpool_patchtokens": False,
+                                       "lr": 0.001,
+                                       "momentum": 0.9,
+                                       "wd": 0,
+                                       "val_freq": 1,
+                                       "restore_epoch": 0,
+                                      }
+                            }
+                            }, # Note that if if_throughput, there should be just 1 gpu visible and the batch size should be 128
+"save_params": { "output_dir": "/storage/yue/dino_models/ViT-S-16-CIFAR100/",
                  "restore_epoch": 0,
                  "saveckp_freq": 1,
-                 "tb_logoriginal": False, # Whether to log the embeddings and knn results before the training starts
+                 "tb_logoriginal": True, # Whether to log the embeddings and knn results before the training starts
                  "tb_freq": 101, # Frequency to save embeddings and knn results
                  "nb_knn": [20],
                  "temp_knn": 0.07
                },
- "dataset_params": {"data_folder": "/storage/yue/data/",
-                    "specification": { "dataset_name": "CIFAR100",  # "ImageNet", "IMAGENETTE", "CIFAR10", "CIFAR100"
-                                       "ImageNet":{ "num_labels": 1000,
-                                                    "knn_use_cuda": False,
-                                                    "label_mapping_path": 'data_label_mapping/ImageNet.json'},
-                                       "IMAGENETTE":{ "num_labels": 10,
-                                                      "knn_use_cuda": False,
-                                                      "label_mapping_path": 'data_label_mapping/ImageNet.json'},
-                                       "CIFAR10": { "num_labels": 10,
-                                                    "knn_use_cuda": False,
-                                                    "label_mapping_path": 'data_label_mapping/CIFAR10.json' },
-                                       "CIFAR100": { "num_labels": 100,
+"dataset_params": {"data_folder": "/storage/yue/data/",
+                   "specification": { "dataset_name": "CIFAR100",  # "ImageNet", "IMAGENETTE", "CIFAR10", "CIFAR100"
+                                      "ImageNet":{ "num_labels": 1000,
+                                                   "knn_use_cuda": False,
+                                                   "label_mapping_path": 'data_label_mapping/ImageNet.json'},
+                                      "IMAGENETTE":{ "num_labels": 10,
                                                      "knn_use_cuda": False,
-                                                     "label_mapping_path": 'data_label_mapping/CIFAR100.json' },
+                                                     "label_mapping_path": 'data_label_mapping/ImageNet.json'},
+                                      "CIFAR10": { "num_labels": 10,
+                                                   "knn_use_cuda": False,
+                                                   "label_mapping_path": 'data_label_mapping/CIFAR10.json' },
+                                      "CIFAR100": { "num_labels": 100,
+                                                    "knn_use_cuda": False,
+                                                    "label_mapping_path": 'data_label_mapping/CIFAR100.json' },
 
                     }
  },
-"dataloader_params": {"trainloader":{"batch_size": 512,
-                                     "batch_size_for_scheduler": 1024,
+"dataloader_params": {"trainloader":{"batch_size": 32,
+                                     "batch_size_for_scheduler": 32,
                                      "num_workers": 10, # 'Number of data loading workers per GPU.'
                                      "pin_memory": True,
                                      "drop_last": True},
-                      "valloader": { "batch_size": 512,
+                      "valloader": { "batch_size": 32,
                                      "num_workers": 10, # 'Number of data loading workers per GPU.'
                                      "pin_memory": False,
                                      "drop_last": False}
@@ -86,8 +86,8 @@
                     "clip_grad": 0,
                     "freeze_last_layer": 1,
                     },
-"system_params": {"num_gpus": 8,
-                  "gpu_ids": "0,1,2,3,4,5,6,7",
+"system_params": {"num_gpus": 2,
+                  "gpu_ids": "0,1",
                   "random_seed": 0,
                   "use_fp16": False # """Whether or not to use half precision for training. Improves training time and memory requirements,
                                     #  but can provoke instability and slight decay of performance. We recommend disabling
