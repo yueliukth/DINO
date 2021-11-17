@@ -16,7 +16,7 @@ def linear_train_one_epoch(model, linear_classifier, optimizer, data_loader, epo
     metric_logger = helper.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', helper.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Epoch: [{}]'.format(epoch)
-    for (inp, target) in metric_logger.log_every(iterable=data_loader, print_freq=100, header=header):
+    for (inp, target) in metric_logger.log_every(iterable=data_loader, print_freq=20, header=header):
         # Move to gpu
         inp = inp.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
@@ -58,11 +58,15 @@ def kd_train_one_epoch(epoch, num_epochs,
                        clip_grad, freeze_last_layer, fp16_scaler):
     metric_logger = helper.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}/{}]'.format(epoch, num_epochs)
-    for i in range(10):
-        print(f'At epoch {i}, the learning rate should be {lr_schedule[i*len(data_loader)]} according to the scheduler.')
-    print()
+    if helper.is_main_process():
+        for print_epoch in range(10):
+            print(f'At epoch {print_epoch}, the learning rate should be {lr_schedule[print_epoch*len(data_loader)]} according to the scheduler.')
+        print()
+    # optimizer.param_groups starts with [{'params': regularized}, {'params': not_regularized, 'weight_decay': 0.}]
+    # optimizer.param_groups[0].keys(): dict_keys(['params', 'lr', 'betas', 'eps', 'weight_decay', 'amsgrad'])
+    # optimizer.param_groups[1].keys(): dict_keys(['params', 'weight_decay', 'lr', 'betas', 'eps', 'amsgrad'])
 
-    for it, (images, _) in enumerate(metric_logger.log_every(iterable=data_loader, print_freq=100, header=header)):
+    for it, (images, _) in enumerate(metric_logger.log_every(iterable=data_loader, print_freq=20, header=header)):
         # Update weight decay and learning rate according to their schedule
         it = len(data_loader) * epoch + it  # global training iteration
         for i, param_group in enumerate(optimizer.param_groups):
@@ -117,4 +121,9 @@ def kd_train_one_epoch(epoch, num_epochs,
     # Gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    global_avg_stats =  {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    median_stats =  {k: meter.median for k, meter in metric_logger.meters.items()}
+    avg_stats =  {k: meter.avg for k, meter in metric_logger.meters.items()}
+    max_stats =  {k: meter.max for k, meter in metric_logger.meters.items()}
+    value_stats =  {k: meter.value for k, meter in metric_logger.meters.items()}
+    return global_avg_stats, median_stats, avg_stats, max_stats, value_stats

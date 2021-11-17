@@ -331,7 +331,7 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
             val_plain_dataloader.sampler.set_epoch(epoch)
 
         # ============ Training one epoch of DINO ... ============
-        train_stats = prepare_trainers.kd_train_one_epoch(epoch, training_params['num_epochs'], student, teacher,
+        train_global_avg_stats, train_median_stats, train_avg_stats, train_max_stats, train_value_stats = prepare_trainers.kd_train_one_epoch(epoch, training_params['num_epochs'], student, teacher,
                                                           teacher_without_ddp, dino_loss, train_aug_dataloader,
                                                           optimizer, lr_schedule, wd_schedule, momentum_schedule,
                                                           training_params['clip_grad'],
@@ -341,11 +341,54 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
         # Log the number of training loss in Tensorboard, at every epoch
         if rank == 0:
             print('Training one epoch is done, start writting loss and learning rate in tensorboard...')
-            writer.add_scalar("train_loss", train_stats['loss'], epoch)
-            print(f"Training learing rate at epoch {epoch} is : {train_stats['lr']}")
-            writer.add_scalar("train_lr", train_stats['lr'], epoch)
-            print(f"Training weight decay at epoch {epoch} is : {train_stats['wd']}")
-            writer.add_scalar("train_wd", train_stats['wd'], epoch)
+
+            writer.add_scalar("globalavg_train_loss", train_global_avg_stats['loss'], epoch)
+            print(f"Global averaged training learning rate at epoch {epoch} is : {train_global_avg_stats['lr']}")
+            writer.add_scalar("globalavg_train_lr", train_global_avg_stats['lr'], epoch)
+            print(f"Global averaged training weight decay at epoch {epoch} is : {train_global_avg_stats['wd']}")
+            writer.add_scalar("globalavg_train_wd", train_global_avg_stats['wd'], epoch)
+
+            writer.add_scalar("median_train_loss", train_median_stats['loss'], epoch)
+            print(f"Median training learning rate at epoch {epoch} is : {train_median_stats['lr']}")
+            writer.add_scalar("median_train_lr", train_median_stats['lr'], epoch)
+            print(f"Median training weight decay at epoch {epoch} is : {train_median_stats['wd']}")
+            writer.add_scalar("median_train_wd", train_median_stats['wd'], epoch)
+
+            writer.add_scalar("avg_train_loss", train_avg_stats['loss'], epoch)
+            print(f"Averaged training learning rate at epoch {epoch} is : {train_avg_stats['lr']}")
+            writer.add_scalar("avg_train_lr", train_avg_stats['lr'], epoch)
+            print(f"Averaged training weight decay at epoch {epoch} is : {train_avg_stats['wd']}")
+            writer.add_scalar("avg_train_wd", train_avg_stats['wd'], epoch)
+
+            writer.add_scalar("max_train_loss", train_max_stats['loss'], epoch)
+            print(f"Max training learning rate at epoch {epoch} is : {train_max_stats['lr']}")
+            writer.add_scalar("max_train_lr", train_max_stats['lr'], epoch)
+            print(f"Max training weight decay at epoch {epoch} is : {train_max_stats['wd']}")
+            writer.add_scalar("max_train_wd", train_max_stats['wd'], epoch)
+
+            writer.add_scalar("value_train_loss", train_value_stats['loss'], epoch)
+            print(f"Value training learning rate at epoch {epoch} is : {train_value_stats['lr']}")
+            writer.add_scalar("value_train_lr", train_value_stats['lr'], epoch)
+            print(f"Value training weight decay at epoch {epoch} is : {train_value_stats['wd']}")
+            writer.add_scalar("value_train_wd", train_value_stats['wd'], epoch)
+
+
+        train_global_avg_log = {**{f'train_{k}': v for k, v in train_global_avg_stats.items()}, 'epoch': epoch}
+        train_median_log = {**{f'train_{k}': v for k, v in train_median_stats.items()}, 'epoch': epoch}
+        train_avg_log = {**{f'train_{k}': v for k, v in train_avg_stats.items()}, 'epoch': epoch}
+        train_max_log = {**{f'train_{k}': v for k, v in train_max_stats.items()}, 'epoch': epoch}
+        train_value_log = {**{f'train_{k}': v for k, v in train_value_stats.items()}, 'epoch': epoch}
+        if rank == 0:
+            with (Path(save_params['output_dir']) / "train_global_avg_log.txt").open("a") as f:
+                f.write(json.dumps(train_global_avg_log) + "\n")
+            with (Path(save_params['output_dir']) / "train_median_log.txt").open("a") as f:
+                f.write(json.dumps(train_median_log) + "\n")
+            with (Path(save_params['output_dir']) / "train_avg_log.txt").open("a") as f:
+                f.write(json.dumps(train_avg_log) + "\n")
+            with (Path(save_params['output_dir']) / "train_max_log.txt").open("a") as f:
+                f.write(json.dumps(train_max_log) + "\n")
+            with (Path(save_params['output_dir']) / "train_value_log.txt").open("a") as f:
+                f.write(json.dumps(train_value_log) + "\n")
 
         # Log the embeddings & KNN results in Tensorboard, at every tb_freq epoch
         if epoch!=0 and epoch % save_params['tb_freq'] == 0:
@@ -380,16 +423,10 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
                      'dino_loss': dino_loss.state_dict(), }
         if fp16_scaler is not None:
             save_dict['fp16_scaler'] = fp16_scaler.state_dict()
-
         if rank == 0:
             torch.save(save_dict, os.path.join(save_params['output_dir'], "checkpoint.pth"))
             if save_params['saveckp_freq'] and epoch % save_params['saveckp_freq'] == 0:
                 torch.save(save_dict, os.path.join(save_params['output_dir'], f'checkpoint{epoch:04}.pth'))
-
-        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()}, 'epoch': epoch}
-        if rank == 0:
-            with (Path(save_params['output_dir']) / "log.txt").open("a") as f:
-                f.write(json.dumps(log_stats) + "\n")
 
     writer.close()
     # Log the number of total training time in Tensorboard
