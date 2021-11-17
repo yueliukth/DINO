@@ -21,15 +21,12 @@ class ReturnIndexDataset(datasets.ImageFolder):
 class GetDatasets():
     def __init__(self, dataset_params):
         self.dataset_params = dataset_params
-        self.dataset_name = dataset_params['dataset_name']
         self.data_folder = dataset_params['data_folder']
-        if self.dataset_name == 'ImageNet' \
-                or self.dataset_name == 'IMAGENETTE':
-            label_mapping_dict = open('data_label_mapping/ImageNet.json')
-            self.label_mapping = json.load(label_mapping_dict)
-        elif self.dataset_name == 'FashionMNIST':
-            label_mapping_dict = open('data_label_mapping/FashionMNIST.json')
-            self.label_mapping = json.load(label_mapping_dict)
+        self.dataset_name = dataset_params['specification']['dataset_name']
+        self.use_cuda = dataset_params['specification'][self.dataset_name]['knn_use_cuda']
+        label_mapping_path = dataset_params['specification'][self.dataset_name]['label_mapping_path']
+        f = open(label_mapping_path)
+        self.label_mapping = json.load(f)
 
     def get_datasets(self, official_split, transforms, include_index=False):
         #transforms = ToTensor()

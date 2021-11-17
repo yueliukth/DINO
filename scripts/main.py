@@ -92,6 +92,7 @@ def parse_args(params_path=None):
 
 def prepare_params(args):
     # Define some parameters for easy access
+    start_training = args['start_training']
     save_params = args['save_params']
     dataset_params = args['dataset_params']
     system_params = args['system_params']
@@ -101,12 +102,12 @@ def prepare_params(args):
     training_params = args['training_params']
     trainloader_params = dataloader_params['trainloader']
     valloader_params = dataloader_params['valloader']
-    return save_params, dataset_params, system_params, dataloader_params, model_params, \
+    return start_training, save_params, dataset_params, system_params, dataloader_params, model_params, \
            augmentation_params, training_params, trainloader_params, valloader_params
 
 
 def prepare_data_model(rank, args):
-    save_params, dataset_params, system_params, dataloader_params, model_params, \
+    start_training, save_params, dataset_params, system_params, dataloader_params, model_params, \
     augmentation_params, training_params, trainloader_params, valloader_params = prepare_params(args)
 
     # Tensorboard Summarywriter for logging
@@ -138,6 +139,7 @@ def prepare_data_model(rank, args):
 
     start_time = time.time()
     label_mapping = prepare_datasets.GetDatasets(dataset_params).label_mapping
+    use_cuda = prepare_datasets.GetDatasets(dataset_params).use_cuda
     train_aug_dataset = prepare_datasets.GetDatasets(dataset_params).get_datasets('train/', transforms_aug)
     train_plain_dataset = prepare_datasets.GetDatasets(dataset_params).get_datasets('train/', transforms_plain,
                                                                                     include_index=True)
@@ -164,23 +166,30 @@ def prepare_data_model(rank, args):
 
     # Prepare the data for training with DataLoaders
     # pin_memory makes transferring images from CPU to GPU faster
+    if start_training['mode'] == 'train':
+        train_batch_size = int(trainloader_params['batch_size'] / system_params['num_gpus'])
+        val_batch_size = int(valloader_params['batch_size'] / system_params['num_gpus'])
+    elif start_training['mode'] == 'eval':
+        train_batch_size = int(start_training['eval']['linear']['batch_size'] / system_params['num_gpus'])
+        val_batch_size = int(start_training['eval']['linear']['batch_size'] / system_params['num_gpus'])
+
     train_aug_dataloader = DataLoader(train_aug_dataset, sampler=train_aug_sampler,
-                                      batch_size=int(trainloader_params['batch_size'] / system_params['num_gpus']),
+                                      batch_size=train_batch_size,
                                       num_workers=trainloader_params['num_workers'],
                                       pin_memory=trainloader_params['pin_memory'],
                                       drop_last=trainloader_params['drop_last'])
     train_plain_dataloader = DataLoader(train_plain_dataset, sampler=train_plain_sampler,
-                                        batch_size=int(trainloader_params['batch_size'] / system_params['num_gpus']),
+                                        batch_size=train_batch_size,
                                         num_workers=trainloader_params['num_workers'],
                                         pin_memory=trainloader_params['pin_memory'],
                                         drop_last=trainloader_params['drop_last'])
     train_plain_for_lineartrain_dataloader = DataLoader(train_plain_for_lineartrain_dataset, sampler=train_plain_for_lineartrain_sampler,
-                                        batch_size=int(trainloader_params['batch_size'] / system_params['num_gpus']),
+                                        batch_size=train_batch_size,
                                         num_workers=trainloader_params['num_workers'],
                                         pin_memory=trainloader_params['pin_memory'],
                                         drop_last=trainloader_params['drop_last'])
     val_plain_dataloader = DataLoader(val_plain_dataset, sampler=val_plain_sampler,
-                                      batch_size=int(valloader_params['batch_size'] / system_params['num_gpus']),
+                                      batch_size=val_batch_size,
                                       num_workers=valloader_params['num_workers'],
                                       pin_memory=valloader_params['pin_memory'],
                                       drop_last=valloader_params['drop_last'])
@@ -223,13 +232,7 @@ def prepare_data_model(rank, args):
 
         n_parameters_student_backbone = sum(p.numel() for p in student.module.backbone.parameters() if p.requires_grad)
         print('Number of params of the student backbone:', n_parameters_student_backbone)
-        writer.add_text("Number of params of the student backbone", str(n_parameters_student_backbone))
-
-    if dataset_params['dataset_name'] == 'ImageNet':
-        use_cuda = False
-    else:
-        use_cuda = False
-
+        writer.add_text("Number of params of the student backbone", str(n_parameters_student_backbone))    
     return rank, writer, student, teacher, teacher_without_ddp, \
            train_aug_dataloader, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, \
            label_mapping, use_cuda
@@ -238,7 +241,7 @@ def prepare_data_model(rank, args):
 def train_process(rank, args, writer, student, teacher, teacher_without_ddp, train_aug_dataloader,
                   train_plain_dataloader, val_plain_dataloader, label_mapping, use_cuda):
 
-    save_params, dataset_params, system_params, dataloader_params, model_params, \
+    start_training, save_params, dataset_params, system_params, dataloader_params, model_params, \
     augmentation_params, training_params, trainloader_params, valloader_params = prepare_params(args)
 
     # ============ Preparing loss ... ============
@@ -443,13 +446,12 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
     if rank == 0:
         print("Start linear evaluation...")
 
-    eval_linear = start_training['eval']['linear']
     # ============ Building model with linear classifier ... ============
+    dataset_name = dataset_params['specification']['dataset_name']
+    num_labels = dataset_params['specification'][dataset_name]['num_labels']
+    eval_linear = start_training['eval']['linear']
     embed_dim = teacher_without_ddp.backbone.embed_dim * (eval_linear['n_last_blocks'] + int(eval_linear['avgpool_patchtokens']))
-    if dataset_params['dataset_name'] == 'ImageNet':
-        linear_classifier = evaluation.LinearClassifier(embed_dim, num_labels=1000)
-    elif dataset_params['dataset_name'] == 'IMAGENETTE':
-        linear_classifier = evaluation.LinearClassifier(embed_dim, num_labels=10)
+    linear_classifier = evaluation.LinearClassifier(embed_dim, num_labels=num_labels)
     linear_classifier = linear_classifier.cuda()
     linear_classifier = nn.parallel.DistributedDataParallel(linear_classifier, device_ids=[rank])
 
@@ -496,6 +498,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
         # Log the number of training loss with linear classifier in Tensorboard, at every epoch
         if rank == 0:
             writer.add_scalar("train_loss_linear", train_stats_linear['loss'], epoch)
+            writer.add_scalar("train_lr_linear", train_stats_linear['lr'], epoch)
 
         log_stats_linear = {**{f'train_{k}': v for k, v in train_stats_linear.items()}, 'epoch': epoch}
 
@@ -524,8 +527,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
     
 def eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, \
                  label_mapping, use_cuda):
-    start_training = args['start_training']
-    save_params, dataset_params, system_params, dataloader_params, model_params, \
+    start_training, save_params, dataset_params, system_params, dataloader_params, model_params, \
     augmentation_params, training_params, trainloader_params, valloader_params = prepare_params(args)
 
     epoch = int(start_training['eval']['epoch'])
@@ -638,8 +640,8 @@ def main(rank, args):
 
 if __name__ == '__main__':
     # Read params and print them
-    args = parse_args(params_path='yaml/ViT-S-16.yaml')
-    # args = parse_args(params_path='yaml/ViT-S-16-imagenette.yaml')
+    #args = parse_args(params_path='yaml/ViT-S-16.yaml')
+    args = parse_args(params_path='yaml/ViT-S-16-imagenette.yaml')
     # args = parse_args(params_path='yaml/ResNet50.yaml')
 
     # Launch multi-gpu / distributed training

@@ -1,7 +1,7 @@
-{"start_training": {"mode": "train", # "train" or "eval"
+{"start_training": {"mode": "eval", # "train" or "eval"
                     "eval": {"choices": ["if_linear"], # ["if_embeddings",  "if_knn", "if_linear", "if_throughput"]
-                             "epoch": 1,
-                             "linear":{"batch_size": 16,
+                             "epoch": 0,
+                             "linear":{"batch_size": 1024,
                                        "num_epochs": 100,
                                        "n_last_blocks": 4,
                                        "avgpool_patchtokens": False,
@@ -21,9 +21,16 @@
                  "nb_knn": [20],
                  "temp_knn": 0.07
                },
-"dataset_params": { "dataset_name": "IMAGENETTE", # "ImageNet", "IMAGENETTE"
-                    "data_folder": "/storage/yue/data/",
-                  },
+"dataset_params": {"data_folder": "/storage/yue/data/",
+                   "specification": { "dataset_name": "IMAGENETTE",  # "ImageNet", "IMAGENETTE"
+                                      "ImageNet":{ "num_labels": 1000,
+                                                   "knn_use_cuda": False,
+                                                   "label_mapping_path": 'data_label_mapping/ImageNet.json'},
+                                      "IMAGENETTE":{ "num_labels": 10,
+                                                     "knn_use_cuda": False,
+                                                     "label_mapping_path": 'data_label_mapping/ImageNet.json'}
+                    }
+ },
 "dataloader_params": {"trainloader":{"batch_size": 16,
                                      "batch_size_for_scheduler": 32,
                                      "num_workers": 10, # 'Number of data loading workers per GPU.'

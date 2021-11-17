@@ -21,8 +21,15 @@
                  "nb_knn": [20],
                  "temp_knn": 0.07
                },
-"dataset_params": { "dataset_name": "ImageNet", # "ImageNet", "IMAGENETTE"
-                    "data_folder": "/storage/yue/data/",
+"dataset_params": {"data_folder": "/storage/yue/data/",
+                   "specification": { "dataset_name": "ImageNet",  # "ImageNet", "IMAGENETTE"
+                                      "ImageNet":{ "num_labels": 1000,
+                                                   "knn_use_cuda": False,
+                                                   "label_mapping_path": 'data_label_mapping/ImageNet.json'}
+                                      "IMAGENETTE":{ "num_labels": 10,
+                                                     "knn_use_cuda": False
+                                                     "label_mapping_path": 'data_label_mapping/ImageNet.json'}
+                                    }
                   },
 "dataloader_params": {"trainloader":{"batch_size": 512,
                                      "batch_size_for_scheduler": 1024,
