@@ -65,7 +65,7 @@
                  # In our experiments, we typically set this paramater to False with vit_small and True with vit_base."
                 },
 "training_params": {"num_epochs": 100,
-                    "num_epochs_for_scheduler": 300,
+                    "num_epochs_for_scheduler": 100,
                     "warmup_teacher_temp": 0.04,
                     "teacher_temp": 0.07, # """Final value (after linear warmup)
 #                                         # of the teacher temperature. For most experiments, anything above 0.07 is unstable. We recommend
@@ -75,7 +75,7 @@
                     "center_momentum": 0.9,
                     "optimizer": {"name": "adamw", # adamw, sgd
                                   "sgd": { "lr": 0, "momentum": 0.9}},
-                    "lr":{"base_lr": 0.0005,
+                    "lr":{"base_lr": 0.001,
                           "final_lr": 0.00001,
                           "warmup_epochs": 10,
                           "start_warmup_lr": 0},
