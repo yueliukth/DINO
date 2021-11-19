@@ -50,6 +50,39 @@ class FlowerDataset(Dataset):
         else:
             return img, lab
 
+class CBISDDSMDataset(Dataset):
+    def __init__(self, img_folder, csv_path, official_split, transforms=None, include_index=False):
+        """
+        Args:
+            img_folder (string): Directory with all the images.
+            csv_path (string): Path to the csv file with labels.
+            official_split (string): 'train/' or 'val/'
+            transforms (callable, optional): Optional transforms to be applied
+                on a sample.
+        """
+        self.img_folder = img_folder
+        csv = pd.read_csv(csv_path)
+        if 'train' in official_split:
+            self.label_csv = csv[csv['split']=='train'].reset_index(drop=True)
+        elif 'val' in official_split:
+            self.label_csv = csv[csv['split']=='val'].reset_index(drop=True)
+
+        self.official_split = official_split
+        self.transforms = transforms
+        self.include_index = include_index
+    def __len__(self):
+        return len(self.label_csv)
+    def __getitem__(self, idx):
+        img_path = os.path.join(self.img_folder, self.label_csv.iloc[idx, 'img_path'])
+        lab = torch.tensor(self.label_csv.iloc[idx, 'label'])
+        img = Image.open(img_path)
+        if self.transforms:
+            img = self.transforms(img)
+        if self.include_index:
+            return img, lab, idx
+        else:
+            return img, lab
+
 class ReturnIndexDataset(datasets.ImageFolder):
     def __getitem__(self, idx):
         img, lab = super(ReturnIndexDataset, self).__getitem__(idx)
@@ -70,12 +103,14 @@ class GetDatasets():
         self.data_folder = data_folder
         self.dataset_name = dataset_name
         self.use_cuda = knn_use_cuda
-        label_mapping_path = label_mapping_path
-        if os.path.exists(label_mapping_path):
-            f = open(label_mapping_path)
-            self.label_mapping = json.load(f)
+        if self.dataset_name == 'CBISDDSM':
+            self.label_mapping = {'0': 'calcification', '1': 'mass'}
         else:
-            self.label_mapping = None
+            if os.path.exists(label_mapping_path):
+                f = open(label_mapping_path)
+                self.label_mapping = json.load(f)
+            else:
+                self.label_mapping = None
 
     def get_datasets(self, official_split, transforms, include_index=False):
         #transforms = ToTensor()
@@ -102,7 +137,7 @@ class GetDatasets():
             else:
                 dataset = ImageFolder(os.path.join(target_path, official_split), transform=transforms)
 
-        elif self.dataset_name in ['Flower']:
+        elif self.dataset_name in ['Flower', 'CBISDDSM']:
             if self.dataset_name == 'Flower':
                 # Number of classes: 102
                 # Each class consists of between 40 and 258 images
@@ -119,14 +154,24 @@ class GetDatasets():
                     with tarfile.open(os.path.join(target_path, 'oxford-102-flowers.tgz'), 'r:gz') as tar:
                         tar.extractall(path=target_path)
 
-                img_folder = os.path.join(target_path, 'oxford-102-flowers', 'jpg')
+                img_folder = os.path.join(target_path, 'oxford-102-flowers')
                 if 'train' in official_split:
-                    label_path_list = [os.path.join(target_path, 'oxford-102-flowers', 'train.txt'),
-                                   os.path.join(target_path, 'oxford-102-flowers', 'valid.txt')]
+                    label_path_list = [os.path.join(img_folder, 'jpg', 'train.txt'),
+                                   os.path.join(img_folder, 'jpg', 'valid.txt')]
                 elif 'val' in official_split:
-                    label_path_list = [os.path.join(target_path, 'oxford-102-flowers', 'test.txt')]
+                    label_path_list = [os.path.join(img_folder, 'jpg', 'test.txt')]
 
                 dataset = FlowerDataset(img_folder=img_folder, label_path_list=label_path_list, transforms=transforms, include_index=include_index)
+            elif self.dataset_name == 'CBISDDSM':
+                # Number of classes: 2 {'0': 'calcification'-1511 images, '1': 'mass'-1592 images}
+                # Number of images: 3103 images from 1566 patients
+                # Data split on patient-level 80% train, 20% val, resulting 1252 train patients and 314 val patients
+                # Train: 2484 images ('0' - 1203 images, '1' - 1281 images)
+                # Val: 619 images ('0' -308 images, '1' - 311 images)
+                target_path = os.path.join(self.data_folder, "CBISDDSM")
+                img_folder = os.path.join(target_path, 'imgs')
+                csv_path = os.path.join(target_path, 'ddsm_csv_for_dataset.csv')
+                dataset = CBISDDSMDataset(img_folder=img_folder, csv_path=csv_path, official_split=official_split, transforms=transforms, include_index=include_index)
 
         elif self.dataset_name in ['CIFAR10', 'CIFAR100']:
             if self.dataset_name == 'CIFAR10':
