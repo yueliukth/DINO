@@ -326,12 +326,10 @@ def get_open_port():
     # NOTE: there is still a chance the port could be taken by other processes.
     return port
 
-def set_sys_params(params):
-    # Set gpu params
-    os.environ["CUDA_VISIBLE_DEVICES"] = params['gpu_ids']
+def set_sys_params(random_seed):
     # Set random seeds for reproducibility TODO: to figure out whether it is necessary to have different random seeds
     # on different ranks (DeiT uses different seeds) 
-    seed = params['random_seed'] #+ get_rank()
+    seed = random_seed #+ get_rank()
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
@@ -375,6 +373,9 @@ def run_distributed_workers(rank, main_func, world_size, dist_url, args):
     main_func(rank, args)
 
 def launch(main_func, args=()):
+    # Set gpu params
+    os.environ["CUDA_VISIBLE_DEVICES"] = args['system_params']['gpu_ids']
+
     system_params = args['system_params']
     world_size = system_params['num_gpus']
     port = get_open_port()

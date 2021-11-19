@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from torchvision.datasets import ImageFolder
 from torchvision.transforms import ToTensor
 import torch.distributed as dist
-from fastai.vision.all import *
+#from fastai.vision.all import *
 
 import helper
 
@@ -23,12 +23,11 @@ class ReturnIndexDatasetCIFAR100(datasets.CIFAR100):
         return img, lab, idx
 
 class GetDatasets():
-    def __init__(self, dataset_params):
-        self.dataset_params = dataset_params
-        self.data_folder = dataset_params['data_folder']
-        self.dataset_name = dataset_params['specification']['dataset_name']
-        self.use_cuda = dataset_params['specification'][self.dataset_name]['knn_use_cuda']
-        label_mapping_path = dataset_params['specification'][self.dataset_name]['label_mapping_path']
+    def __init__(self, data_folder, dataset_name, knn_use_cuda, label_mapping_path):
+        self.data_folder = data_folder
+        self.dataset_name = dataset_name
+        self.use_cuda = knn_use_cuda
+        label_mapping_path = label_mapping_path
         if os.path.exists(label_mapping_path):
             f = open(label_mapping_path)
             self.label_mapping = json.load(f)
@@ -153,53 +152,70 @@ class DataAugmentationDINO(object):
         Local transform. Note that the augmentation is stochastic so one
         instance is enough and will lead to different crops.
     """
-    def __init__(self, global_crops_scale, local_crops_scale, local_crops_number, full_size, global_size, local_size):
-        flip_and_color_jitter = transforms.Compose([
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomApply(
-                [transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)],
-                p=0.8
-            ),
-            transforms.RandomGrayscale(p=0.2),
-        ])
-
-
+    def __init__(self, augmentations, global_crops_scale, local_crops_scale, local_crops_number, full_size, global_size, local_size):
         normalize = transforms.Compose([transforms.ToTensor(),
                                         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),])
-    
         self.transforms_plain = transforms.Compose([
             transforms.Resize(full_size, interpolation=3),
             transforms.CenterCrop(global_size),
             normalize])
-
         self.transforms_plain_for_lineartrain = transforms.Compose([
             transforms.RandomResizedCrop(global_size),
             transforms.RandomHorizontalFlip(),
             normalize])
+        global_transforms1_list = []
+        global_transforms2_list = []
+        local_transforms_list = []
+
+        if 'RandomResizedCrop' in augmentations:
+            global_transforms1_list.append(transforms.RandomResizedCrop(global_size, scale=global_crops_scale, interpolation=Image.BICUBIC))
+            global_transforms2_list.append(transforms.RandomResizedCrop(global_size, scale=global_crops_scale, interpolation=Image.BICUBIC))
+            local_transforms_list.append(transforms.RandomResizedCrop(local_size, scale=local_crops_scale, interpolation=Image.BICUBIC))
+        else:
+            global_transforms1_list.append(transforms.RandomResizedCrop(global_size))
+            global_transforms2_list.append(transforms.RandomResizedCrop(global_size))
+            local_transforms_list.append(transforms.RandomResizedCrop(local_size))
+
+        if 'RandomHorizontalFlip' in augmentations:
+            global_transforms1_list.append(transforms.RandomHorizontalFlip(p=0.5))
+            global_transforms2_list.append(transforms.RandomHorizontalFlip(p=0.5))
+            local_transforms_list.append(transforms.RandomHorizontalFlip(p=0.5),)
+
+        if 'ColorJitter' in augmentations:
+            global_transforms1_list.append(transforms.RandomApply(
+                [transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)],
+                p=0.8))
+            global_transforms2_list.append(transforms.RandomApply(
+                [transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)],
+                p=0.8))
+            local_transforms_list.append(transforms.RandomApply(
+                [transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)],
+                p=0.8))
+
+        if 'RandomGrayscale' in augmentations:
+            global_transforms1_list.append(transforms.RandomGrayscale(p=0.2))
+            global_transforms2_list.append(transforms.RandomGrayscale(p=0.2))
+            local_transforms_list.append(transforms.RandomGrayscale(p=0.2))
+
+        if 'GaussianBlur' in augmentations:
+            global_transforms1_list.append(GaussianBlur(p=1.0))
+            global_transforms2_list.append(GaussianBlur(p=0.1))
+            local_transforms_list.append(GaussianBlur(p=0.5))
+
+        if 'Solarization' in augmentations:
+            global_transforms2_list.append(Solarization(0.2))
+
+        global_transforms1_list.append(normalize)
+        global_transforms2_list.append(normalize)
+        local_transforms_list.append(normalize)
 
         # first global crop
-        self.global_transforms1 = transforms.Compose([
-            transforms.RandomResizedCrop(global_size, scale=global_crops_scale, interpolation=Image.BICUBIC),
-            flip_and_color_jitter,
-            GaussianBlur(1.0),
-            normalize,
-        ])
+        self.global_transforms1 = transforms.Compose(global_transforms1_list)
         # second global crop
-        self.global_transforms2 = transforms.Compose([
-            transforms.RandomResizedCrop(global_size, scale=global_crops_scale, interpolation=Image.BICUBIC),
-            flip_and_color_jitter,
-            GaussianBlur(0.1),
-            Solarization(0.2),
-            normalize,
-        ])
+        self.global_transforms2 = transforms.Compose(global_transforms2_list)
         # transformation for the local small crops
         self.local_crops_number = local_crops_number
-        self.local_transforms = transforms.Compose([
-            transforms.RandomResizedCrop(local_size, scale=local_crops_scale, interpolation=Image.BICUBIC),
-            flip_and_color_jitter,
-            GaussianBlur(p=0.5),
-            normalize,
-        ])
+        self.local_transforms = transforms.Compose(local_transforms_list)
 
     def __call__(self, image):
         crops = []

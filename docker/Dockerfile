@@ -79,7 +79,7 @@ RUN conda install -c conda-forge pydicom
 RUN conda install -c conda-forge opencv
 RUN conda install -c conda-forge scikit-learn
 RUN conda install -c conda-forge scikit-image
-RUN conda install -c fastchan fastai
+# RUN conda install -c fastchan fastai
 RUN pip install kaggle
 RUN conda install -c conda-forge ipywidgets
 RUN pip install tensorboard
@@ -91,4 +91,4 @@ RUN conda install -c conda-forge vim
 RUN apt-get -y install vim nano
 RUN pip install pyclean
 RUN env > /root/env.txt #&& cron -f
-RUN echo 'alias jupyter="jupyter notebook --ip 0.0.0.0 --no-browser --allow-root --port 8088"' >> ~/.bashrc
+RUN echo 'alias jupyter="jupyter notebook --ip 0.0.0.0 --no-browser --allow-root --port 8081"' >> ~/.bashrc

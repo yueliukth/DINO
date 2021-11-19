@@ -84,6 +84,20 @@ def parse_args(params_path=None):
     with open(params_path) as f:
         args = yaml.safe_load(f)
 
+    output_dir = args["save_params"]["output_dir"]
+    backbone_option = args["model_params"]["backbone_option"]
+    dataset_name = args["dataset_params"]["dataset_choice"]["dataset_name"]
+    model_name = backbone_option + '_' + dataset_name
+    augmentations = args["dataset_params"]['augmentations']
+    full_augmentations = ['RandomResizedCrop', 'RandomHorizontalFlip', 'ColorJitter', 'RandomGrayscale', 'GaussianBlur', 'Solarization']
+    for each_augmentation in full_augmentations:
+        if each_augmentation not in augmentations:
+            model_name = model_name + '_' + 'no' + each_augmentation
+    model_path = os.path.join(output_dir, model_name)
+    print(end='\n\n' + '==' * 50 + '\n\n')
+    print('Model is going to be save in ', model_path)
+    args["save_params"]["model_path"] = model_path
+
     print(end='\n\n' + '==' * 50 + '\n\n')
     print('ARGS ARE: ')
     print(json.dumps(args, indent=4))
@@ -112,13 +126,13 @@ def prepare_data_model(rank, args):
 
     # Tensorboard Summarywriter for logging
     # Log network input arg in Tensorboard and save it into a yaml file
-    tensorboard_path = os.path.join(save_params['output_dir'], 'tensorboard/')
+    tensorboard_path = os.path.join(save_params['model_path'], 'tensorboard/')
     if rank == 0:
         if not os.path.exists(tensorboard_path):
             os.makedirs(tensorboard_path)
     writer = SummaryWriter(tensorboard_path)
     writer.add_text("Configuration", json.dumps(args, indent=4))
-    output_file_path = os.path.join(save_params['output_dir'], 'config.yaml')
+    output_file_path = os.path.join(save_params['model_path'], 'config.yaml')
     if not os.path.exists(os.path.dirname(output_file_path)):
         os.makedirs(os.path.dirname(output_file_path))
     with open(output_file_path, 'w') as outfile:
@@ -126,27 +140,29 @@ def prepare_data_model(rank, args):
 
     # ============ Preparing system configuration ... ============
     # Set gpu params and random seeds for reproducibility
-    helper.set_sys_params(system_params)
+    helper.set_sys_params(system_params['random_seed'])
 
     # ============ Preparing data ... ============
     # Define transformations applied on augmented and plain data
     # The aug_dataset is for training, while plain_datasets is mostly used to compute knn and visualize the embeddings
-    transforms_aug = prepare_datasets.DataAugmentationDINO(augmentation_params['global_crops_scale'],
+    transforms_aug = prepare_datasets.DataAugmentationDINO(dataset_params['augmentations'], augmentation_params['global_crops_scale'],
         augmentation_params['local_crops_scale'], augmentation_params['local_crops_number'],
         augmentation_params['full_size'], augmentation_params['global_size'], augmentation_params['local_size'])
     transforms_plain = transforms_aug.transforms_plain
     transforms_plain_for_lineartrain = transforms_aug.transforms_plain_for_lineartrain
 
     start_time = time.time()
-    label_mapping = prepare_datasets.GetDatasets(dataset_params).label_mapping
-    use_cuda = prepare_datasets.GetDatasets(dataset_params).use_cuda
-    train_aug_dataset = prepare_datasets.GetDatasets(dataset_params).get_datasets('train/', transforms_aug)
-    train_plain_dataset = prepare_datasets.GetDatasets(dataset_params).get_datasets('train/', transforms_plain,
-                                                                                    include_index=True)
-    train_plain_for_lineartrain_dataset = prepare_datasets.GetDatasets(dataset_params).get_datasets('train/', transforms_plain_for_lineartrain,
-                                                                                    include_index=False)
-    val_plain_dataset = prepare_datasets.GetDatasets(dataset_params).get_datasets('val/', transforms_plain,
-                                                                                  include_index=True)
+    dataset_name = dataset_params['dataset_choice']['dataset_name']
+    dataset_class = prepare_datasets.GetDatasets(data_folder=dataset_params['data_folder'],
+                                                 dataset_name=dataset_name,
+                                                 knn_use_cuda=dataset_params['dataset_choice'][dataset_name]['knn_use_cuda'],
+                                                 label_mapping_path=dataset_params['dataset_choice'][dataset_name]['label_mapping_path'])
+    label_mapping = dataset_class.label_mapping
+    use_cuda = dataset_class.use_cuda
+    train_aug_dataset = dataset_class.get_datasets('train/', transforms_aug)
+    train_plain_dataset = dataset_class.get_datasets('train/', transforms_plain, include_index=True)
+    train_plain_for_lineartrain_dataset = dataset_class.get_datasets('train/', transforms_plain_for_lineartrain, include_index=False)
+    val_plain_dataset = dataset_class.get_datasets('val/', transforms_plain, include_index=True)
 
     if train_plain_dataset.classes != val_plain_dataset.classes:
         raise ValueError("Inconsistent classes in train and val.")
@@ -300,7 +316,7 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
 
     # ============ Optionally resume training ... ============
     to_restore = {'epoch': save_params['restore_epoch']}
-    helper.restart_from_checkpoint(os.path.join(save_params['output_dir'], "checkpoint.pth"), run_variables=to_restore,
+    helper.restart_from_checkpoint(os.path.join(save_params['model_path'], "checkpoint.pth"), run_variables=to_restore,
                                    student=student, teacher=teacher, optimizer=optimizer, fp16_scaler=fp16_scaler,
                                    dino_loss=dino_loss, )
     print("Starting DINO training !")
@@ -382,15 +398,15 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
         train_max_log = {**{f'train_{k}': v for k, v in train_max_stats.items()}, 'epoch': epoch}
         train_value_log = {**{f'train_{k}': v for k, v in train_value_stats.items()}, 'epoch': epoch}
         if rank == 0:
-            with (Path(save_params['output_dir']) / "train_global_avg_log.txt").open("a") as f:
+            with (Path(save_params['model_path']) / "train_global_avg_log.txt").open("a") as f:
                 f.write(json.dumps(train_global_avg_log) + "\n")
-            with (Path(save_params['output_dir']) / "train_median_log.txt").open("a") as f:
+            with (Path(save_params['model_path']) / "train_median_log.txt").open("a") as f:
                 f.write(json.dumps(train_median_log) + "\n")
-            with (Path(save_params['output_dir']) / "train_avg_log.txt").open("a") as f:
+            with (Path(save_params['model_path']) / "train_avg_log.txt").open("a") as f:
                 f.write(json.dumps(train_avg_log) + "\n")
-            with (Path(save_params['output_dir']) / "train_max_log.txt").open("a") as f:
+            with (Path(save_params['model_path']) / "train_max_log.txt").open("a") as f:
                 f.write(json.dumps(train_max_log) + "\n")
-            with (Path(save_params['output_dir']) / "train_value_log.txt").open("a") as f:
+            with (Path(save_params['model_path']) / "train_value_log.txt").open("a") as f:
                 f.write(json.dumps(train_value_log) + "\n")
 
         # Log the embeddings & KNN results in Tensorboard, at every tb_freq epoch
@@ -414,11 +430,11 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
             # If the current epoch is the last epoch, we save the embeddings
             if rank == 0 and epoch == training_params['num_epochs']-1:
                 torch.save(train_embeddings.cpu(),
-                           os.path.join(save_params['output_dir'], f"trainembeddings{epoch:04}.pth"))
+                           os.path.join(save_params['model_path'], f"trainembeddings{epoch:04}.pth"))
                 torch.save(val_embeddings.cpu(),
-                           os.path.join(save_params['output_dir'], f"valembeddings{epoch:04}.pth"))
-                torch.save(train_labels.cpu(), os.path.join(save_params['output_dir'], f"trainlabels{epoch:04}.pth"))
-                torch.save(val_labels.cpu(), os.path.join(save_params['output_dir'], f"vallabels{epoch:04}.pth"))
+                           os.path.join(save_params['model_path'], f"valembeddings{epoch:04}.pth"))
+                torch.save(train_labels.cpu(), os.path.join(save_params['model_path'], f"trainlabels{epoch:04}.pth"))
+                torch.save(val_labels.cpu(), os.path.join(save_params['model_path'], f"vallabels{epoch:04}.pth"))
 
         # ============ Saving models and writing logs in log.txt file ... ============
         save_dict = {'student': student.state_dict(), 'teacher': teacher.state_dict(),
@@ -427,9 +443,9 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
         if fp16_scaler is not None:
             save_dict['fp16_scaler'] = fp16_scaler.state_dict()
         if rank == 0:
-            torch.save(save_dict, os.path.join(save_params['output_dir'], "checkpoint.pth"))
+            torch.save(save_dict, os.path.join(save_params['model_path'], "checkpoint.pth"))
             if save_params['saveckp_freq'] and epoch % save_params['saveckp_freq'] == 0:
-                torch.save(save_dict, os.path.join(save_params['output_dir'], f'checkpoint{epoch:04}.pth'))
+                torch.save(save_dict, os.path.join(save_params['model_path'], f'checkpoint{epoch:04}.pth'))
 
     writer.close()
     # Log the number of total training time in Tensorboard
@@ -437,7 +453,7 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
     if rank == 0:
-        with (Path(save_params['output_dir']) / "log.txt").open("a") as f:
+        with (Path(save_params['model_path']) / "log.txt").open("a") as f:
             f.write(
                 f"Training time from epoch {to_restore['epoch']} to epoch {training_params['num_epochs']}: " + total_time_str + "\n")
 
@@ -447,8 +463,8 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
         print("Start linear evaluation...")
 
     # ============ Building model with linear classifier ... ============
-    dataset_name = dataset_params['specification']['dataset_name']
-    num_labels = dataset_params['specification'][dataset_name]['num_labels']
+    dataset_name = dataset_params['dataset_choice']['dataset_name']
+    num_labels = dataset_params['dataset_choice'][dataset_name]['num_labels']
     eval_linear = start_training['eval']['linear']
     embed_dim = teacher_without_ddp.backbone.embed_dim * (eval_linear['n_last_blocks'] + int(eval_linear['avgpool_patchtokens']))
     linear_classifier = evaluation.LinearClassifier(embed_dim, num_labels=num_labels)
@@ -476,7 +492,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
 
     # ============ Optionally resume training ... ============
     to_restore_linear = {'epoch': eval_linear['restore_epoch'], "best_acc": 0.}
-    helper.restart_from_checkpoint(os.path.join(save_params['output_dir'], "checkpoint_linear.pth"),
+    helper.restart_from_checkpoint(os.path.join(save_params['model_path'], "checkpoint_linear.pth"),
                                    run_variables=to_restore_linear,
                                    state_dict=linear_classifier,
                                    optimizer=optimizer_linear,
@@ -517,8 +533,8 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
         save_dict_linear = {"epoch": epoch + 1, "state_dict": linear_classifier.state_dict(),
                             "optimizer": optimizer_linear.state_dict(), "scheduler": scheduler_linear.state_dict(), "best_acc": best_acc}
         if rank == 0:
-            torch.save(save_dict_linear, os.path.join(save_params['output_dir'], f'checkpoint{epoch:04}_linear.pth'))
-            with (Path(save_params['output_dir']) / "log_linear.txt").open("a") as f:
+            torch.save(save_dict_linear, os.path.join(save_params['model_path'], f'checkpoint{epoch:04}_linear.pth'))
+            with (Path(save_params['model_path']) / "log_linear.txt").open("a") as f:
                 f.write(json.dumps(log_stats_linear) + "\n")
     print("Training of the supervised linear classifier on frozen features completed.\n"
           "Top-1 test accuracy: {acc:.1f}".format(acc=best_acc))
@@ -535,7 +551,7 @@ def eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader
 
     # Record the starting time
     start_time = time.time()
-    checkpoint = torch.load(os.path.join(save_params['output_dir'], f"checkpoint{epoch:04}.pth"))
+    checkpoint = torch.load(os.path.join(save_params['model_path'], f"checkpoint{epoch:04}.pth"))
     # Set the teacher model as inference (evaluating) time
     teacher_without_ddp.eval()
     teacher_without_ddp.load_state_dict(checkpoint['teacher'])
@@ -546,10 +562,10 @@ def eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader
     if 'if_knn' in start_training['eval']['choices']:
         if rank == 0:
             print("Adding knn results in tensorboard...")
-        trainembeddings_path = os.path.join(save_params['output_dir'], f"trainembeddings{epoch:04}.pth")
-        valembeddings_path = os.path.join(save_params['output_dir'], f"valembeddings{epoch:04}.pth")
-        trainlabels_path = os.path.join(save_params['output_dir'], f"trainlabels{epoch:04}.pth")
-        vallabels_path = os.path.join(save_params['output_dir'], f"vallabels{epoch:04}.pth")
+        trainembeddings_path = os.path.join(save_params['model_path'], f"trainembeddings{epoch:04}.pth")
+        valembeddings_path = os.path.join(save_params['model_path'], f"valembeddings{epoch:04}.pth")
+        trainlabels_path = os.path.join(save_params['model_path'], f"trainlabels{epoch:04}.pth")
+        vallabels_path = os.path.join(save_params['model_path'], f"vallabels{epoch:04}.pth")
         if os.path.exists(trainembeddings_path) and \
                 os.path.exists(valembeddings_path) and \
                 os.path.exists(trainlabels_path) and \
@@ -641,8 +657,8 @@ def main(rank, args):
 if __name__ == '__main__':
     # Read params and print them
     # args = parse_args(params_path='yaml/ViT-S-16.yaml')
-    # args = parse_args(params_path='yaml/ViT-S-16-CIFAR100.yaml')
-    args = parse_args(params_path='yaml/ResNet50.yaml')
+    args = parse_args(params_path='yaml/ViT-S-16-CIFAR100.yaml')
+    # args = parse_args(params_path='yaml/ResNet50.yaml')
 
     # Launch multi-gpu / distributed training
     helper.launch(main, args)
