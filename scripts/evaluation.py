@@ -28,7 +28,7 @@ def validate_network(val_loader, model, linear_classifier, n, avgpool, model_par
         output = linear_classifier(output)
         loss = nn.CrossEntropyLoss()(output, target)
 
-        if linear_classifier.module.num_labels >= 5:
+        if linear_classifier.module.num_classes >= 5:
             acc1, acc5 = accuracy(output, target, topk=(1, 5))
         else:
             acc1, = accuracy(output, target, topk=(1,))
@@ -36,9 +36,9 @@ def validate_network(val_loader, model, linear_classifier, n, avgpool, model_par
         batch_size = inp.shape[0]
         metric_logger.update(loss=loss.item())
         metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
-        if linear_classifier.module.num_labels >= 5:
+        if linear_classifier.module.num_classes >= 5:
             metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
-    if linear_classifier.module.num_labels >= 5:
+    if linear_classifier.module.num_classes >= 5:
         print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
               .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
     else:
@@ -49,10 +49,10 @@ def validate_network(val_loader, model, linear_classifier, n, avgpool, model_par
 
 class LinearClassifier(nn.Module):
     """Linear layer to train on top of frozen features"""
-    def __init__(self, dim, num_labels=1000):
+    def __init__(self, dim, num_classes=1000):
         super(LinearClassifier, self).__init__()
-        self.num_labels = num_labels
-        self.linear = nn.Linear(dim, num_labels)
+        self.num_classes = num_classes
+        self.linear = nn.Linear(dim, num_classes)
         self.linear.weight.data.normal_(mean=0.0, std=0.01)
         self.linear.bias.data.zero_()
 
@@ -176,15 +176,18 @@ def compute_embedding(backbone, dataloader, label_mapping, use_cuda=False, retur
         # Otherwise, return dataset labels [0, 1, ...]
         if return_tb and subset_size!=0:
             labels = [dataloader.dataset.classes[int(i)] for i in labels.view(1,-1)[0].tolist()]
-    
-            dataloader_classes_list = list(dataloader.dataset.classes)
-            dataloader_classes_list.sort()
-            label_mapping_classes_list = list(label_mapping.values())
-            label_mapping_classes_list.sort()
-            if dataloader_classes_list == label_mapping_classes_list:
-                metadata_labels = labels
+            
+            if label_mapping != None:
+                dataloader_classes_list = list(dataloader.dataset.classes)
+                dataloader_classes_list.sort()
+                label_mapping_classes_list = list(label_mapping.values())
+                label_mapping_classes_list.sort()
+                if dataloader_classes_list == label_mapping_classes_list:
+                    metadata_labels = labels
+                else:
+                    metadata_labels = [label_mapping[l] for l in labels]
             else:
-                metadata_labels = [label_mapping[l] for l in labels]
+                metadata_labels = labels
 
             indices = np.arange(len(labels))
             np.random.shuffle(indices)

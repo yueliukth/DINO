@@ -467,7 +467,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
     num_labels = dataset_params['dataset_choice'][dataset_name]['num_labels']
     eval_linear = start_training['eval']['linear']
     embed_dim = teacher_without_ddp.backbone.embed_dim * (eval_linear['n_last_blocks'] + int(eval_linear['avgpool_patchtokens']))
-    linear_classifier = evaluation.LinearClassifier(embed_dim, num_labels=num_labels)
+    linear_classifier = evaluation.LinearClassifier(embed_dim, num_classes=num_labels)
     linear_classifier = linear_classifier.cuda()
     linear_classifier = nn.parallel.DistributedDataParallel(linear_classifier, device_ids=[rank])
 
@@ -658,6 +658,7 @@ if __name__ == '__main__':
     # Read params and print them
     # args = parse_args(params_path='yaml/ViT-S-16.yaml')
     args = parse_args(params_path='yaml/ViT-S-16-CIFAR100.yaml')
+    # args = parse_args(params_path='yaml/ViT-S-16-Flower.yaml')
     # args = parse_args(params_path='yaml/ResNet50.yaml')
 
     # Launch multi-gpu / distributed training

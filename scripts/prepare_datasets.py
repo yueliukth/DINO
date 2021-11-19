@@ -2,21 +2,64 @@ import os
 import json
 import shutil
 import random
+import tarfile
+import pandas as pd
 from PIL import Image
 from PIL import ImageFilter, ImageOps
+
+import torch
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
+from torch.utils.data import Dataset
 from torchvision.datasets import ImageFolder
+from torchvision.datasets.utils import download_url
 from torchvision.transforms import ToTensor
 import torch.distributed as dist
 #from fastai.vision.all import *
 
 import helper
 
+class FlowerDataset(Dataset):
+    def __init__(self, img_folder, label_path_list, transforms=None, include_index=False):
+        """
+        Args:
+            img_folder (string): Directory with all the images.
+            label_path_list (string): Path to the csv files with labels.
+            transforms (callable, optional): Optional transforms to be applied
+                on a sample.
+        """
+
+        label_csv_list = []
+        for label_path in label_path_list:
+            label_csv = pd.read_csv(label_path, delimiter=' ')
+            label_csv_list.append(label_csv)
+        self.label_csv_combined = pd.concat(label_csv_list, ignore_index=True)
+        self.img_folder = img_folder
+        self.transforms = transforms
+        self.include_index = include_index
+    def __len__(self):
+        return len(self.label_csv_combined)
+    def __getitem__(self, idx):
+        img_path = os.path.join(self.img_folder, self.label_csv_combined.iloc[idx, 0])
+        lab = torch.tensor(self.label_csv_combined.iloc[idx,1])
+        img = Image.open(img_path)
+        if self.transforms:
+            img = self.transforms(img)
+        if self.include_index:
+            return img, lab, idx
+        else:
+            return img, lab
+
 class ReturnIndexDataset(datasets.ImageFolder):
     def __getitem__(self, idx):
         img, lab = super(ReturnIndexDataset, self).__getitem__(idx)
         return img, lab, idx
+
+class ReturnIndexDatasetCIFAR10(datasets.CIFAR10):
+    def __getitem__(self, idx):
+        img, lab = super(ReturnIndexDatasetCIFAR10, self).__getitem__(idx)
+        return img, lab, idx
+
 class ReturnIndexDatasetCIFAR100(datasets.CIFAR100):
     def __getitem__(self, idx):
         img, lab = super(ReturnIndexDatasetCIFAR100, self).__getitem__(idx)
@@ -36,7 +79,7 @@ class GetDatasets():
 
     def get_datasets(self, official_split, transforms, include_index=False):
         #transforms = ToTensor()
-        if self.dataset_name in ['ImageNet', 'IMAGENETTE']:
+        if self.dataset_name in ['ImageNet', 'IMAGENETTE', 'Flower']:
             if self.dataset_name == 'ImageNet':
                 # Train: 1,281,167 images
                 # Val: 50,000 images
@@ -58,16 +101,50 @@ class GetDatasets():
                 dataset = ReturnIndexDataset(os.path.join(target_path, official_split), transform=transforms)
             else:
                 dataset = ImageFolder(os.path.join(target_path, official_split), transform=transforms)
+
+        elif self.dataset_name in ['Flower']:
+            if self.dataset_name == 'Flower':
+                # Number of classes: 102
+                # Each class consists of between 40 and 258 images
+                # Train: 1020 images (10 images per class)
+                # Val: 1020 images (10 images per class)
+                # Test: the remaining 6149 images (minimum 20 per class)
+                target_path = os.path.join(self.data_folder, "Flower")
+                target_path = os.path.abspath(target_path)
+                if not os.path.exists(target_path) or len(os.listdir(target_path)) == 0:
+                    # If Flower does not exist in data folder, we download it
+                    dataset_url = "https://s3.amazonaws.com/fast-ai-imageclas/oxford-102-flowers.tgz"
+                    download_url(dataset_url, target_path)
+                    # Extract from archive
+                    with tarfile.open(os.path.join(target_path, 'oxford-102-flowers.tgz'), 'r:gz') as tar:
+                        tar.extractall(path=target_path)
+
+                img_folder = os.path.join(target_path, 'oxford-102-flowers', 'jpg')
+                if 'train' in official_split:
+                    label_path_list = [os.path.join(target_path, 'oxford-102-flowers', 'train.txt'),
+                                   os.path.join(target_path, 'oxford-102-flowers', 'valid.txt')]
+                elif 'val' in official_split:
+                    label_path_list = [os.path.join(target_path, 'oxford-102-flowers', 'test.txt')]
+
+                dataset = FlowerDataset(img_folder=img_folder, label_path_list=label_path_list, transforms=transforms, include_index=include_index)
+
         elif self.dataset_name in ['CIFAR10', 'CIFAR100']:
             if self.dataset_name == 'CIFAR10':
                 # Train: 50,000 images
                 # Test: 10,000 images
                 # We consider the test set of CIFAR10 as validation set in our task
-                dataset = datasets.CIFAR10(
-                    root=self.data_folder,
-                    train=(official_split == 'train/'),
-                    download=True,
-                    transform=transforms)
+                if include_index:
+                    dataset = ReturnIndexDatasetCIFAR10(
+                        root=self.data_folder,
+                        train=(official_split == 'train/'),
+                        download=True,
+                        transform=transforms)
+                else:
+                    dataset = datasets.CIFAR10(
+                        root=self.data_folder,
+                        train=(official_split == 'train/'),
+                        download=True,
+                        transform=transforms)
             elif self.dataset_name == 'CIFAR100':
                 # Train: 50,000 images
                 # Test: 10,000 images

@@ -22,7 +22,7 @@
                  "temp_knn": 0.07
                },
 "dataset_params": {"data_folder": "/storage/yue/data/",
-                   "dataset_choice": {"dataset_name": "CIFAR100",  # "ImageNet", "IMAGENETTE", "CIFAR10", "CIFAR100", "Flower"
+                   "dataset_choice": {"dataset_name": "Flower",  # "ImageNet", "IMAGENETTE", "CIFAR10", "CIFAR100", "Flower"
                                       "ImageNet":
                                         { "num_classes": 1000,
                                           "knn_use_cuda": False,
@@ -42,7 +42,7 @@
                                       "Flower":
                                         { "num_classes": 102,
                                           "knn_use_cuda": False,
-                                          "label_mapping_path": 'data_label_mapping/Flower.json' },},
+                                          "label_mapping_path": None },},
                    "augmentations": ['RandomResizedCrop', 'RandomHorizontalFlip', 'RandomGrayscale', 'GaussianBlur', 'Solarization'],
 
   # ['RandomResizedCrop', 'RandomHorizontalFlip', 'ColorJitter', 'RandomGrayscale', 'GaussianBlur', 'Solarization'],
@@ -95,8 +95,8 @@
                     "clip_grad": 0,
                     "freeze_last_layer": 1,
                     },
-"system_params": {"num_gpus": 2,
-                  "gpu_ids": "6,7",
+"system_params": {"num_gpus": 1,
+                  "gpu_ids": "1",
                   "random_seed": 0,
                   "use_fp16": False # """Whether or not to use half precision for training. Improves training time and memory requirements,
                                     #  but can provoke instability and slight decay of performance. We recommend disabling
