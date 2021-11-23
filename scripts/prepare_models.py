@@ -18,6 +18,8 @@ def build_dino(model_params):
         student = torchvision_models.__dict__[model_params['backbone_option']]()
         teacher = torchvision_models.__dict__[model_params['backbone_option']]()
         embed_dim = student.fc.weight.shape[1]
+        # student.embed_dim = embed_dim
+        # teacher.embed_dim = embed_dim
 
     # Disable layers dedicated to ImageNet labels classification
     student.fc, student.head = nn.Identity(), nn.Identity()

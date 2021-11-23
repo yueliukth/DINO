@@ -87,7 +87,9 @@ def get_optimizer(optimizer_choice, params_dict, lr, momentum):
         optimizer = helper.LARS(params_dict)  # to use with convnet and large batches
     return optimizer
 
-def linear_train_one_epoch(model, linear_classifier, optimizer, data_loader, epoch, n, avgpool, model_params):
+def linear_train_one_epoch(model, linear_classifier, optimizer, data_loader, epoch, n, avgpool, model_params, mode='eval'):
+    if mode=='train_finetuning':
+        model.train()
     linear_classifier.train()
     metric_logger = helper.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', helper.SmoothedValue(window_size=1, fmt='{value:.6f}'))
@@ -97,8 +99,7 @@ def linear_train_one_epoch(model, linear_classifier, optimizer, data_loader, epo
         inp = inp.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
 
-        # Forward - we do not update the backbone
-        with torch.no_grad():
+        if mode=='train_finetuning':
             if "vit" in model_params['backbone_option']:
                 intermediate_output = model.get_intermediate_layers(inp, n)
                 output = torch.cat([x[:, 0] for x in intermediate_output], dim=-1)
@@ -107,6 +108,17 @@ def linear_train_one_epoch(model, linear_classifier, optimizer, data_loader, epo
                     output = output.reshape(output.shape[0], -1)
             else:
                 output = model(inp)
+        elif mode=='eval':
+            # Forward - we do not update the backbone
+            with torch.no_grad():
+                if "vit" in model_params['backbone_option']:
+                    intermediate_output = model.get_intermediate_layers(inp, n)
+                    output = torch.cat([x[:, 0] for x in intermediate_output], dim=-1)
+                    if avgpool:
+                        output = torch.cat((output.unsqueeze(-1), torch.mean(intermediate_output[-1][:, 1:], dim=1).unsqueeze(-1)), dim=-1)
+                        output = output.reshape(output.shape[0], -1)
+                else:
+                    output = model(inp)
         output = linear_classifier(output)
 
         # Compute cross entropy loss

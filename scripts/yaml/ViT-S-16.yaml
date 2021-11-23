@@ -1,5 +1,5 @@
-{"start_training": {"mode": "train", # "train" or "eval"
-                    "eval": {"choices": ["if_linear", "if_knn"], # ["if_embeddings",  "if_knn", "if_linear", "if_throughput"]
+{"start_training": {"mode": "eval", # "train" or "eval"
+                    "eval": {"choices": ["if_throughput"], # ["if_embeddings",  "if_knn", "if_linear", "if_throughput"]
                              "epoch": 99,
                              "linear":{"batch_size": 1024,
                                         "num_epochs": 100,
@@ -10,10 +10,10 @@
                                         "wd": 0,
                                         "val_freq": 1,
                                         "restore_epoch": 0,
-                             }
-                      }
-  }, # Note that if if_throughput, there should be just 1 gpu visible and the batch size should be 128
-"save_params": { "output_dir": "/storage/yue/dino_models/",
+                             } },
+                    "train_finetuning": { "ckp_path": "/storage/yue/dino_models/vit_small_ImageNet/checkpoint0099.pth" },
+                    },  # Note that if if_throughput, there should be just 1 gpu visible and the batch size should be 128
+ "save_params": { "output_dir": "/storage/yue/dino_models/",
                  "restore_epoch": 0,
                  "saveckp_freq": 1,
                  "tb_logoriginal": False, # Whether to log the embeddings and knn results before the training starts
@@ -34,8 +34,8 @@
                                                     "label_mapping_path": 'data_label_mapping/CIFAR10.json' },
                                        "CIFAR100": { "num_labels": 100,
                                                      "knn_use_cuda": False,
-                                                     "label_mapping_path": 'data_label_mapping/CIFAR100.json' },}
-                      "augmentations": [ 'RandomHorizontalFlip', 'ColorJitter', 'RandomGrayscale', 'GaussianBlur', 'Solarization' ],
+                                                     "label_mapping_path": 'data_label_mapping/CIFAR100.json' },},
+                      "augmentations": [ 'RandomResizedCrop', 'RandomHorizontalFlip', 'ColorJitter', 'RandomGrayscale', 'GaussianBlur', 'Solarization' ],
 
    # ['RandomResizedCrop', 'RandomHorizontalFlip', 'ColorJitter', 'RandomGrayscale', 'GaussianBlur', 'Solarization'],
  },
@@ -44,7 +44,7 @@
                                      "num_workers": 10, # 'Number of data loading workers per GPU.'
                                      "pin_memory": True,
                                      "drop_last": True},
-                      "valloader": { "batch_size": 512,
+                      "valloader": { "batch_size": 128, # 128 if if_throughput, otherwise, 512
                                      "num_workers": 10, # 'Number of data loading workers per GPU.'
                                      "pin_memory": False,
                                      "drop_last": False}
@@ -87,8 +87,8 @@
                     "clip_grad": 0,
                     "freeze_last_layer": 1,
                     },
-"system_params": {"num_gpus": 8,
-                  "gpu_ids": "0,1,2,3,4,5,6,7",
+"system_params": {"num_gpus": 1,
+                  "gpu_ids": "0",
                   "random_seed": 0,
                   "use_fp16": False # """Whether or not to use half precision for training. Improves training time and memory requirements,
                                     #  but can provoke instability and slight decay of performance. We recommend disabling

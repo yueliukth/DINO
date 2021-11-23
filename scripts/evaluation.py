@@ -6,7 +6,9 @@ import helper
 from helper import accuracy
 
 @torch.no_grad()
-def validate_network(val_loader, model, linear_classifier, n, avgpool, model_params):
+def validate_network(val_loader, model, linear_classifier, n, avgpool, model_params, mode):
+    if mode=='train_finetuning':
+        model.eval()
     linear_classifier.eval()
     metric_logger = helper.MetricLogger(delimiter="  ")
     header = 'Val:'

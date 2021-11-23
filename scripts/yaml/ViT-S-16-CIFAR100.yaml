@@ -1,6 +1,6 @@
-{"start_training": {"mode": "train", # "train" or "eval"
-                    "eval": {"choices": ["if_linear"], # ["if_embeddings",  "if_knn", "if_linear", "if_throughput"]
-                             "epoch": 0,
+{"start_training": {"mode": "train_finetuning", # "train" or "eval" or "train_finetuning"
+                    "eval": {"choices": ["if_knn"], # ["if_embeddings",  "if_knn", "if_linear", "if_throughput"]
+                             "epoch": 99,
                              "linear":{"batch_size": 1024,
                                        "num_epochs": 100,
                                        "n_last_blocks": 4,
@@ -9,10 +9,20 @@
                                        "momentum": 0.9,
                                        "wd": 0,
                                        "val_freq": 1,
-                                       "restore_epoch": 0,
-                                      }
-                            }
-                            }, # Note that if if_throughput, there should be just 1 gpu visible and the batch size should be 128
+                             } },
+                    "train_finetuning": {"ckp_path_choice": "Ours", # "Official", "Ours"
+                                         "ckp_path":
+                                           {"Official": "/storage/yue/dino_models/dino_deitsmall16_pretrain_full_checkpoint_official.pth",
+                                            "Ours": "/storage/yue/dino_models/vit_small_ImageNet/checkpoint0099.pth"},
+                                         "batch_size": 128,
+                                         "num_epochs": 100,
+                                         "n_last_blocks": 4,
+                                         "avgpool_patchtokens": False,
+                                         "lr": 0.001,
+                                         "momentum": 0.9,
+                                         "wd": 0,
+                                         "val_freq": 1,},
+                    },  # Note that if if_throughput, there should be just 1 gpu visible and the batch size should be 128
 "save_params": { "output_dir": "/storage/yue/dino_models/",
                  "restore_epoch": 0,
                  "saveckp_freq": 1,
@@ -37,13 +47,17 @@
                                           "label_mapping_path": None },
                                       "CIFAR100":
                                         { "num_classes": 100,
-                                          "knn_use_cuda": False,
+                                          "knn_use_cuda": True,
                                           "label_mapping_path": None },
                                       "Flower":
                                         { "num_classes": 102,
                                           "knn_use_cuda": False,
-                                          "label_mapping_path": 'data_label_mapping/Flower.json' },},
-                   "augmentations": ['RandomResizedCrop', 'RandomHorizontalFlip', 'RandomGrayscale', 'GaussianBlur', 'Solarization'],
+                                          "label_mapping_path": 'data_label_mapping/Flower.json' },
+                                      "CBISDDSM":
+                                        { "num_classes": 2,
+                                          "knn_use_cuda": False,
+                                          "label_mapping_path": None },},
+                   "augmentations": ['RandomResizedCrop', 'RandomHorizontalFlip', 'ColorJitter', 'RandomGrayscale', 'GaussianBlur', 'Solarization'],
 
   # ['RandomResizedCrop', 'RandomHorizontalFlip', 'ColorJitter', 'RandomGrayscale', 'GaussianBlur', 'Solarization'],
  },
@@ -96,7 +110,7 @@
                     "freeze_last_layer": 1,
                     },
 "system_params": {"num_gpus": 2,
-                  "gpu_ids": "6,7",
+                  "gpu_ids": "4,5",
                   "random_seed": 0,
                   "use_fp16": False # """Whether or not to use half precision for training. Improves training time and memory requirements,
                                     #  but can provoke instability and slight decay of performance. We recommend disabling

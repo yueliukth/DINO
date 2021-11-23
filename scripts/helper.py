@@ -12,6 +12,14 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
 
+def load_state_dict(model, state_dict):
+    # remove `module.` prefix
+    state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+    # remove `backbone.` prefix induced by multicrop wrapper
+    #state_dict = {k.replace("backbone.", ""): v for k, v in state_dict.items()}
+    msg = model.load_state_dict(state_dict, strict=True)
+    # print('Pretrained weights loaded with msg: {}'.format(msg))
+
 def accuracy(output, target, topk=(1,)):
     """Computes the accuracy over the k top predictions for the specified values of k"""
     maxk = max(topk)

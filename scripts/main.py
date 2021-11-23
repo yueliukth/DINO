@@ -93,6 +93,11 @@ def parse_args(params_path=None):
     for each_augmentation in full_augmentations:
         if each_augmentation not in augmentations:
             model_name = model_name + '_' + 'no' + each_augmentation
+    if args['start_training']['mode'] == "train_finetuning":
+        if args['start_training']['train_finetuning']['ckp_path_choice'] == "Official":
+            model_name = model_name + '_finetuning_official'
+        elif args['start_training']['train_finetuning']['ckp_path_choice'] == "Ours":
+            model_name = model_name + '_finetuning_ours'
     model_path = os.path.join(output_dir, model_name)
     print(end='\n\n' + '==' * 50 + '\n\n')
     print('Model is going to be save in ', model_path)
@@ -188,6 +193,9 @@ def prepare_data_model(rank, args):
     elif start_training['mode'] == 'eval':
         train_batch_size = int(start_training['eval']['linear']['batch_size'] / system_params['num_gpus'])
         val_batch_size = int(start_training['eval']['linear']['batch_size'] / system_params['num_gpus'])
+    elif start_training['mode'] == 'train_finetuning':
+        train_batch_size = int(start_training['train_finetuning']['batch_size'] / system_params['num_gpus'])
+        val_batch_size = int(start_training['train_finetuning']['batch_size'] / system_params['num_gpus'])
 
     train_aug_dataloader = DataLoader(train_aug_dataset, sampler=train_aug_sampler,
                                       batch_size=train_batch_size,
@@ -236,9 +244,9 @@ def prepare_data_model(rank, args):
         # Teacher_without_ddp and teacher are the same thing
         teacher_without_ddp = teacher
     student = nn.parallel.DistributedDataParallel(student, device_ids=[rank])
-
-    # Teacher and student start with the same weights and we turn off the gradients on teacher network
-    helper.initialize_momentum_state(online_net=student, momentum_net=teacher_without_ddp)
+    if args['start_training']['mode'] != "eval":
+        # Teacher and student start with the same weights and we turn off the gradients on teacher network
+        helper.initialize_momentum_state(online_net=student, momentum_net=teacher_without_ddp)
 
     # Log the number of trainable parameters in Tensorboard
     if rank == 0:
@@ -248,7 +256,8 @@ def prepare_data_model(rank, args):
 
         n_parameters_student_backbone = sum(p.numel() for p in student.module.backbone.parameters() if p.requires_grad)
         print('Number of params of the student backbone:', n_parameters_student_backbone)
-        writer.add_text("Number of params of the student backbone", str(n_parameters_student_backbone))    
+        writer.add_text("Number of params of the student backbone", str(n_parameters_student_backbone))
+
     return rank, writer, student, teacher, teacher_without_ddp, \
            train_aug_dataloader, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, \
            label_mapping, use_cuda
@@ -458,177 +467,228 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
                 f"Training time from epoch {to_restore['epoch']} to epoch {training_params['num_epochs']}: " + total_time_str + "\n")
 
 
-def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_dataloader, teacher_without_ddp, start_training, dataset_params, model_params, save_params):
+def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_dataloader, teacher_without_ddp, start_training, dataset_params, model_params, save_params, mode='eval'):
     if rank == 0:
-        print("Start linear evaluation...")
+        if mode == 'eval':
+            print("Start linear evaluation...")
+        elif mode == 'train_finetuning':
+            print("Start finetuning...")
 
     # ============ Building model with linear classifier ... ============
     dataset_name = dataset_params['dataset_choice']['dataset_name']
-    num_labels = dataset_params['dataset_choice'][dataset_name]['num_labels']
+    num_classes = dataset_params['dataset_choice'][dataset_name]['num_classes']
     eval_linear = start_training['eval']['linear']
-    embed_dim = teacher_without_ddp.backbone.embed_dim * (eval_linear['n_last_blocks'] + int(eval_linear['avgpool_patchtokens']))
-    linear_classifier = evaluation.LinearClassifier(embed_dim, num_classes=num_labels)
+    train_finetuning = start_training['train_finetuning']
+    if mode == 'eval':
+        mode_dict = eval_linear.copy()
+    elif mode == 'train_finetuning':
+        mode_dict = train_finetuning.copy()
+
+    batch_size = mode_dict['lr'] * mode_dict['batch_size']/ 256.
+    momentum = mode_dict['momentum']
+    weight_decay = mode_dict['wd']
+    num_epochs = mode_dict['num_epochs']
+    n_last_blocks = mode_dict['n_last_blocks']
+    avgpool_patchtokens = mode_dict['avgpool_patchtokens']
+    val_freq = mode_dict['val_freq']
+
+    if "vit" in model_params['backbone_option']:
+        embed_dim = teacher_without_ddp.backbone.embed_dim * (n_last_blocks + avgpool_patchtokens)
+    else:
+        embed_dim = teacher_without_ddp.head.mlp[0].weight.shape[1]
+    if mode == 'train_finetuning':
+        for param in teacher_without_ddp.parameters():
+            param.requires_grad = True
+    linear_classifier = evaluation.LinearClassifier(embed_dim, num_classes=num_classes)
     linear_classifier = linear_classifier.cuda()
     linear_classifier = nn.parallel.DistributedDataParallel(linear_classifier, device_ids=[rank])
 
     # Log the number of trainable parameters in Tensorboard
     if rank == 0:
         n_parameters_teacher_without_ddp = sum(p.numel() for p in teacher_without_ddp.backbone.parameters() if p.requires_grad)
-        print('Linear evaluation: Number of params of the teacher backbone:', n_parameters_teacher_without_ddp)
-        writer.add_text("Linear evaluation:  Number of params of the teacher backbone", str(n_parameters_teacher_without_ddp))
+        print('Linear evaluation or finetuning to train: Number of params of the teacher backbone:', n_parameters_teacher_without_ddp)
+        writer.add_text("Linear evaluation or finetuning to train:  Number of params of the teacher backbone", str(n_parameters_teacher_without_ddp))
 
         n_parameters_linear = sum(p.numel() for p in linear_classifier.parameters() if p.requires_grad)
-        print('Linear evaluation: Number of params of the linear classifier:', n_parameters_linear)
-        writer.add_text("Linear evaluation:  Number of params of the linear classifier", str(n_parameters_linear))
+        print('Linear evaluation or finetuning to train: Number of params of the linear classifier:', n_parameters_linear)
+        writer.add_text("Linear evaluation or finetuning to train:  Number of params of the linear classifier", str(n_parameters_linear))
 
+    if mode == 'eval':
+        params = linear_classifier.parameters()
+    elif mode == 'train_finetuning':
+        params = [
+            {'params': linear_classifier.parameters()},
+            {'params': teacher_without_ddp.backbone.parameters()}
+        ]
     # ============ Preparing optimizer ... ============
-    optimizer_linear = torch.optim.SGD(
-        linear_classifier.parameters(),
-        eval_linear['lr'] * eval_linear['batch_size']/ 256., # linear scaling rule
-        momentum=eval_linear['momentum'],
-        weight_decay=eval_linear['wd'],
+    optimizer = torch.optim.SGD(
+        params,
+        batch_size, # linear scaling rule
+        momentum=momentum,
+        weight_decay=weight_decay,
         )
-    scheduler_linear = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_linear, eval_linear['num_epochs'])
-
-    # ============ Optionally resume training ... ============
-    to_restore_linear = {'epoch': eval_linear['restore_epoch'], "best_acc": 0.}
-    helper.restart_from_checkpoint(os.path.join(save_params['model_path'], "checkpoint_linear.pth"),
-                                   run_variables=to_restore_linear,
-                                   state_dict=linear_classifier,
-                                   optimizer=optimizer_linear,
-                                   scheduler=scheduler_linear)
-    best_acc = to_restore_linear["best_acc"]
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, num_epochs)
 
     # ============ Start training ... ============
-    for epoch in range(to_restore_linear["epoch"], eval_linear['num_epochs']):
+    best_acc = 0.
+    for epoch in range(0, num_epochs):
         train_plain_for_lineartrain_dataloader.sampler.set_epoch(epoch)
         val_plain_dataloader.sampler.set_epoch(epoch)
 
         # ============ Training one epoch of model with linear classifier ... ============
-        train_stats_linear = prepare_trainers.linear_train_one_epoch(teacher_without_ddp.backbone, linear_classifier, optimizer_linear, train_plain_for_lineartrain_dataloader, epoch, \
-                                                                     eval_linear['n_last_blocks'], eval_linear['avgpool_patchtokens'], \
-                                                                     model_params)
-        scheduler_linear.step()
+        train_stats = prepare_trainers.linear_train_one_epoch(teacher_without_ddp.backbone, linear_classifier, optimizer, train_plain_for_lineartrain_dataloader, epoch, \
+                                                              n_last_blocks, avgpool_patchtokens, \
+                                                              model_params, mode)
+        scheduler.step()
 
         # ============ Writing logs in tensorboard ... ============
         # Log the number of training loss with linear classifier in Tensorboard, at every epoch
         if rank == 0:
-            writer.add_scalar("train_loss_linear", train_stats_linear['loss'], epoch)
-            writer.add_scalar("train_lr_linear", train_stats_linear['lr'], epoch)
+            if mode == 'eval':
+                writer.add_scalar("train_loss_linear", train_stats['loss'], epoch)
+                writer.add_scalar("train_lr_linear", train_stats['lr'], epoch)
+            elif mode == 'train_finetuning':
+                writer.add_scalar("train_loss_finetuning", train_stats['loss'], epoch)
+                writer.add_scalar("train_lr_finetuning", train_stats['lr'], epoch)
 
-        log_stats_linear = {**{f'train_{k}': v for k, v in train_stats_linear.items()}, 'epoch': epoch}
+        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()}, 'epoch': epoch}
 
-        if epoch % eval_linear['val_freq'] == 0 or epoch == eval_linear['num_epochs'] - 1:
-            val_stats_linear = evaluation.validate_network(val_plain_dataloader, teacher_without_ddp.backbone, linear_classifier, eval_linear['n_last_blocks'], eval_linear['avgpool_patchtokens'], model_params)
-            print(f"Accuracy at epoch {epoch} of the network on the validation set: {val_stats_linear['acc1']:.1f}%")
-            best_acc = max(best_acc,val_stats_linear['acc1'])
+        if epoch % val_freq == 0 or epoch == num_epochs - 1:
+            val_stats = evaluation.validate_network(val_plain_dataloader, teacher_without_ddp.backbone, linear_classifier, n_last_blocks, avgpool_patchtokens, model_params, mode)
+            print(f"Accuracy at epoch {epoch} of the network on the validation set: {val_stats['acc1']:.1f}%")
+            best_acc = max(best_acc,val_stats['acc1'])
             print(f'Max accuracy so far: {best_acc:.2f}%')
-            log_stats_linear = {**{k: v for k, v in log_stats_linear.items()},
-                                **{f'val_{k}': v for k, v in val_stats_linear.items()}}
+            log_stats = {**{k: v for k, v in log_stats.items()},
+                                **{f'val_{k}': v for k, v in val_stats.items()}}
             if rank == 0:
-                writer.add_scalar("train_acc1_linear", val_stats_linear['acc1'], epoch)
-                writer.add_scalar("train_max_acc1_linear", best_acc, epoch)
+                if mode == 'eval':
+                    writer.add_scalar("train_acc1_linear", val_stats['acc1'], epoch)
+                    writer.add_scalar("train_max_acc1_linear", best_acc, epoch)
+                elif mode == 'train_finetuning':
+                    writer.add_scalar("train_acc1_finetuning", val_stats['acc1'], epoch)
+                    writer.add_scalar("train_max_acc1_finetuning", best_acc, epoch)
 
         # ============ Saving models and writing logs in log.txt file ... ============
-        save_dict_linear = {"epoch": epoch + 1, "state_dict": linear_classifier.state_dict(),
-                            "optimizer": optimizer_linear.state_dict(), "scheduler": scheduler_linear.state_dict(), "best_acc": best_acc}
+        if mode == 'eval':
+            save_dict = {"epoch": epoch + 1, "state_dict_linear": linear_classifier.state_dict(),
+                         "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(), "best_acc": best_acc}
+        elif mode == 'train_finetuning':
+            save_dict = {"epoch": epoch + 1, "state_dict_linear": linear_classifier.state_dict(), "state_dict_backbone": teacher_without_ddp.backbone.state_dict(),
+                         "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(), "best_acc": best_acc}
         if rank == 0:
-            torch.save(save_dict_linear, os.path.join(save_params['model_path'], f'checkpoint{epoch:04}_linear.pth'))
-            with (Path(save_params['model_path']) / "log_linear.txt").open("a") as f:
-                f.write(json.dumps(log_stats_linear) + "\n")
-    print("Training of the supervised linear classifier on frozen features completed.\n"
+            if mode == 'eval':
+                torch.save(save_dict, os.path.join(save_params['model_path'], f'checkpoint{epoch:04}_linear.pth'))
+                with (Path(save_params['model_path']) / "log_linear.txt").open("a") as f:
+                    f.write(json.dumps(log_stats) + "\n")
+            elif mode == 'train_finetuning':
+                torch.save(save_dict, os.path.join(save_params['model_path'], f'checkpoint{epoch:04}_finetuning.pth'))
+                with (Path(save_params['model_path']) / "log_finetuning.txt").open("a") as f:
+                    f.write(json.dumps(log_stats) + "\n")
+    print("Training completed.\n"
           "Top-1 test accuracy: {acc:.1f}".format(acc=best_acc))
     return writer
 
     
 def eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, \
-                 label_mapping, use_cuda):
+                 label_mapping, use_cuda, mode='eval'):
     start_training, save_params, dataset_params, system_params, dataloader_params, model_params, \
     augmentation_params, training_params, trainloader_params, valloader_params = prepare_params(args)
 
-    epoch = int(start_training['eval']['epoch'])
-    print("Starting DINO evaluation at epoch ", str(epoch))
-
     # Record the starting time
     start_time = time.time()
-    checkpoint = torch.load(os.path.join(save_params['model_path'], f"checkpoint{epoch:04}.pth"))
-    # Set the teacher model as inference (evaluating) time
-    teacher_without_ddp.eval()
-    teacher_without_ddp.load_state_dict(checkpoint['teacher'])
+    
+    if mode != 'train_finetuning':
+        epoch = int(start_training['eval']['epoch'])
+        print("Starting DINO evaluation at epoch ", str(epoch))
+        print('Loading checkpoint from: ', os.path.join(save_params['model_path'], f"checkpoint{epoch:04}.pth"))
+        checkpoint = torch.load(os.path.join(save_params['model_path'], f"checkpoint{epoch:04}.pth"))
+        # Set the teacher model as inference (evaluating) time
+        teacher_without_ddp.eval()
+    else:
+        ckp_path_choice = start_training['train_finetuning']['ckp_path_choice']
+        ckp_path = start_training['train_finetuning']['ckp_path'][ckp_path_choice]
+        print('Loading checkpoint from: ', ckp_path)
+        checkpoint = torch.load(ckp_path)
+        teacher_without_ddp.train()
+    helper.load_state_dict(teacher_without_ddp, checkpoint['teacher'])
 
-    if 'if_linear' in start_training['eval']['choices']:
-        writer = eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_dataloader, teacher_without_ddp, start_training, dataset_params, model_params, save_params)
-
-    if 'if_knn' in start_training['eval']['choices']:
-        if rank == 0:
-            print("Adding knn results in tensorboard...")
-        trainembeddings_path = os.path.join(save_params['model_path'], f"trainembeddings{epoch:04}.pth")
-        valembeddings_path = os.path.join(save_params['model_path'], f"valembeddings{epoch:04}.pth")
-        trainlabels_path = os.path.join(save_params['model_path'], f"trainlabels{epoch:04}.pth")
-        vallabels_path = os.path.join(save_params['model_path'], f"vallabels{epoch:04}.pth")
-        if os.path.exists(trainembeddings_path) and \
-                os.path.exists(valembeddings_path) and \
-                os.path.exists(trainlabels_path) and \
-                os.path.exists(vallabels_path):
+    if mode != 'train_finetuning':
+        if 'if_linear' in start_training['eval']['choices']:
+            writer = eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_dataloader, teacher_without_ddp, start_training, dataset_params, model_params, save_params)
+    
+        if 'if_knn' in start_training['eval']['choices']:
             if rank == 0:
-                print('Embeddings and labels already exist, loading them ....')
-            train_embeddings = torch.load(trainembeddings_path)
-            val_embeddings = torch.load(valembeddings_path)
-            train_labels = torch.load(trainlabels_path)
-            val_labels = torch.load(vallabels_path)
-            if rank==0:
-                knn_with_features(writer=writer, train_embeddings=train_embeddings, train_labels=train_labels, \
-                                  val_embeddings=val_embeddings, val_labels=val_labels, epoch=epoch, save_params=save_params, if_original=False, if_eval=True)
-        else:
-            print('Calculating embeddings and labels...')
-            train_embeddings, train_labels, val_embeddings, val_labels = \
-                knn_in_train_process(rank=rank, writer=writer,
-                                     use_cuda=use_cuda,
-                                     backbone=teacher_without_ddp.backbone,
-                                     train_dataloader=train_plain_dataloader,
-                                     val_dataloader=val_plain_dataloader,
-                                     label_mapping=label_mapping,
-                                     epoch=epoch,
-                                     save_params=save_params,
-                                     if_eval=True)
-
+                print("Adding knn results in tensorboard...")
+            trainembeddings_path = os.path.join(save_params['model_path'], f"trainembeddings{epoch:04}.pth")
+            valembeddings_path = os.path.join(save_params['model_path'], f"valembeddings{epoch:04}.pth")
+            trainlabels_path = os.path.join(save_params['model_path'], f"trainlabels{epoch:04}.pth")
+            vallabels_path = os.path.join(save_params['model_path'], f"vallabels{epoch:04}.pth")
+            if os.path.exists(trainembeddings_path) and \
+                    os.path.exists(valembeddings_path) and \
+                    os.path.exists(trainlabels_path) and \
+                    os.path.exists(vallabels_path):
+                if rank == 0:
+                    print('Embeddings and labels already exist, loading them ....')
+                train_embeddings = torch.load(trainembeddings_path)
+                val_embeddings = torch.load(valembeddings_path)
+                train_labels = torch.load(trainlabels_path)
+                val_labels = torch.load(vallabels_path)
+                if rank==0:
+                    knn_with_features(writer=writer, train_embeddings=train_embeddings, train_labels=train_labels, \
+                                      val_embeddings=val_embeddings, val_labels=val_labels, epoch=epoch, save_params=save_params, if_original=False, if_eval=True)
+            else:
+                print('Calculating embeddings and labels...')
+                train_embeddings, train_labels, val_embeddings, val_labels = \
+                    knn_in_train_process(rank=rank, writer=writer,
+                                         use_cuda=use_cuda,
+                                         backbone=teacher_without_ddp.backbone,
+                                         train_dataloader=train_plain_dataloader,
+                                         val_dataloader=val_plain_dataloader,
+                                         label_mapping=label_mapping,
+                                         epoch=epoch,
+                                         save_params=save_params,
+                                         if_eval=True)
+    
+                if rank == 0:
+                    print('Saving the calculated embeddings and labels...')
+                    torch.save(train_embeddings.cpu(), trainembeddings_path)
+                    torch.save(val_embeddings.cpu(), valembeddings_path)
+                    torch.save(train_labels.cpu(), trainlabels_path)
+                    torch.save(val_labels.cpu(), vallabels_path)
+    
+        if 'if_embeddings' in start_training['eval']['choices']:
             if rank == 0:
-                print('Saving the calculated embeddings and labels...')
-                torch.save(train_embeddings.cpu(), trainembeddings_path)
-                torch.save(val_embeddings.cpu(), valembeddings_path)
-                torch.save(train_labels.cpu(), trainlabels_path)
-                torch.save(val_labels.cpu(), vallabels_path)
-
-    if 'if_embeddings' in start_training['eval']['choices']:
-        if rank == 0:
-            print("Adding embeddings in tensorboard...")
-        tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(teacher_without_ddp.backbone,
-                                                                                 val_plain_dataloader, label_mapping,
-                                                                                 return_tb=True, subset_size=100)
-        if rank == 0:
-            writer.add_embedding(tb_embeddings, metadata=tb_metatdata, label_img=tb_label_img, global_step=epoch,
-                                 tag="embeddings_eval")
-
-    if 'if_throughput' in start_training['eval']['choices']:
-        print("Calculating throughput...")
-        assert system_params['gpu_ids'] == "0"
-        assert valloader_params['batch_size'] == 128
-
-        device = torch.device("cuda:0")
-        teacher_without_ddp.to(device)
-        with torch.no_grad():
-            for img, _, _ in val_plain_dataloader:
-                break
-            total_time = 0
-            starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-            starter.record()
-            _ = teacher_without_ddp(img)
-            ender.record()
-            torch.cuda.synchronize()
-            curr_time = starter.elapsed_time(ender) / 1000
-            total_time += curr_time
-        throughput = 128 / total_time
-        print('Final Throughput: ', throughput)
+                print("Adding embeddings in tensorboard...")
+            tb_embeddings, tb_label_img, tb_metatdata = evaluation.compute_embedding(teacher_without_ddp.backbone,
+                                                                                     val_plain_dataloader, label_mapping,
+                                                                                     return_tb=True, subset_size=100)
+            if rank == 0:
+                writer.add_embedding(tb_embeddings, metadata=tb_metatdata, label_img=tb_label_img, global_step=epoch,
+                                     tag="embeddings_eval")
+    
+        if 'if_throughput' in start_training['eval']['choices']:
+            print("Calculating throughput...")
+            assert system_params['gpu_ids'] == "0"
+            assert valloader_params['batch_size'] == 128
+    
+            device = torch.device("cuda:0")
+            teacher_without_ddp.to(device)
+            with torch.no_grad():
+                for img, _, _ in val_plain_dataloader:
+                    break
+                total_time = 0
+                starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+                starter.record()
+                img = img.to(device)
+                _ = teacher_without_ddp(img)
+                ender.record()
+                torch.cuda.synchronize()
+                curr_time = starter.elapsed_time(ender) / 1000
+                total_time += curr_time
+            throughput = 128 / total_time
+            print('Final Throughput: ', throughput)
+    elif mode == 'train_finetuning':
+        writer = eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_dataloader, teacher_without_ddp, start_training, dataset_params, model_params, save_params, 'train_finetuning')
 
     writer.close()
     total_time = time.time() - start_time
@@ -652,12 +712,16 @@ def main(rank, args):
     elif args['start_training']['mode'] == "eval":
         # Start evaluation
         eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, label_mapping, use_cuda)
+    elif args['start_training']['mode'] == "train_finetuning":
+        # Start evaluation
+        eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, label_mapping, use_cuda, 'train_finetuning')
 
 
 if __name__ == '__main__':
     # Read params and print them
     # args = parse_args(params_path='yaml/ViT-S-16.yaml')
-    args = parse_args(params_path='yaml/ViT-S-16-CIFAR100.yaml')
+    args = parse_args(params_path='yaml/ViT-S-16-CIFAR10.yaml')
+    # args = parse_args(params_path='yaml/ViT-S-16-CIFAR100.yaml')
     # args = parse_args(params_path='yaml/ViT-S-16-Flower.yaml')
     # args = parse_args(params_path='yaml/ResNet50.yaml')
 
