@@ -32,7 +32,7 @@
                  "temp_knn": 0.07
                },
 "dataset_params": {"data_folder": "/storage/yue/data/",
-                   "dataset_choice": {"dataset_name": "Flower",  # "ImageNet", "IMAGENETTE", "CIFAR10", "CIFAR100", "Flower"
+                   "dataset_choice": {"dataset_name": "CBISDDSM",  # "ImageNet", "IMAGENETTE", "CIFAR10", "CIFAR100", "Flower", "CBISDDSM"
                                       "ImageNet":
                                         { "num_classes": 1000,
                                           "knn_use_cuda": False,
@@ -110,7 +110,7 @@
                     "freeze_last_layer": 1,
                     },
 "system_params": {"num_gpus": 2,
-                  "gpu_ids": "2,3",
+                  "gpu_ids": "6,7",
                   "random_seed": 0,
                   "use_fp16": False # """Whether or not to use half precision for training. Improves training time and memory requirements,
                                     #  but can provoke instability and slight decay of performance. We recommend disabling

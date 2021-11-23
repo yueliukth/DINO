@@ -94,7 +94,11 @@ def linear_train_one_epoch(model, linear_classifier, optimizer, data_loader, epo
     metric_logger = helper.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', helper.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Epoch: [{}]'.format(epoch)
-    for (inp, target) in metric_logger.log_every(iterable=data_loader, print_freq=20, header=header):
+    if len(data_loader)<20:
+        print_freq = 20
+    else:
+        print_freq = 20
+    for (inp, target) in metric_logger.log_every(iterable=data_loader, print_freq=print_freq, header=header):
         # Move to gpu
         inp = inp.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)

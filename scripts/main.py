@@ -169,8 +169,8 @@ def prepare_data_model(rank, args):
     train_plain_for_lineartrain_dataset = dataset_class.get_datasets('train/', transforms_plain_for_lineartrain, include_index=False)
     val_plain_dataset = dataset_class.get_datasets('val/', transforms_plain, include_index=True)
 
-    if train_plain_dataset.classes != val_plain_dataset.classes:
-        raise ValueError("Inconsistent classes in train and val.")
+    # if train_plain_dataset.classes != val_plain_dataset.classes:
+    #     raise ValueError("Inconsistent classes in train and val.")
     if rank == 0:
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
@@ -720,9 +720,10 @@ def main(rank, args):
 if __name__ == '__main__':
     # Read params and print them
     # args = parse_args(params_path='yaml/ViT-S-16.yaml')
-    args = parse_args(params_path='yaml/ViT-S-16-CIFAR10.yaml')
+    # args = parse_args(params_path='yaml/ViT-S-16-CIFAR10.yaml')
     # args = parse_args(params_path='yaml/ViT-S-16-CIFAR100.yaml')
-    # args = parse_args(params_path='yaml/ViT-S-16-Flower.yaml')
+    args = parse_args(params_path='yaml/ViT-S-16-Flower.yaml')
+    # args = parse_args(params_path='yaml/ViT-S-16-DDSM.yaml')
     # args = parse_args(params_path='yaml/ResNet50.yaml')
 
     # Launch multi-gpu / distributed training

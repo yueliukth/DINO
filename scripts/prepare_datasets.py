@@ -3,7 +3,9 @@ import json
 import shutil
 import random
 import tarfile
+import numpy as np
 import pandas as pd
+import cv2
 from PIL import Image
 from PIL import ImageFilter, ImageOps
 
@@ -31,9 +33,9 @@ class FlowerDataset(Dataset):
 
         label_csv_list = []
         for label_path in label_path_list:
-            label_csv = pd.read_csv(label_path, delimiter=' ')
+            label_csv = pd.read_csv(label_path, delimiter=' ', header=None)
             label_csv_list.append(label_csv)
-        self.label_csv_combined = pd.concat(label_csv_list, ignore_index=True)
+        self.label_csv_combined = pd.concat(label_csv_list, ignore_index=True).reset_index(drop=True)
         self.img_folder = img_folder
         self.transforms = transforms
         self.include_index = include_index
@@ -61,7 +63,14 @@ class CBISDDSMDataset(Dataset):
                 on a sample.
         """
         self.img_folder = img_folder
+        png_list = []
+        for root, folder, files in os.walk(img_folder):
+            for name in files:
+                if name.endswith('png'):
+                    png_list.append(name)
+
         csv = pd.read_csv(csv_path)
+        csv = csv[csv['img_path'].isin(png_list)].reset_index(drop=True)
         if 'train' in official_split:
             self.label_csv = csv[csv['split']=='train'].reset_index(drop=True)
         elif 'val' in official_split:
@@ -73,15 +82,19 @@ class CBISDDSMDataset(Dataset):
     def __len__(self):
         return len(self.label_csv)
     def __getitem__(self, idx):
-        img_path = os.path.join(self.img_folder, self.label_csv.iloc[idx, 'img_path'])
-        lab = torch.tensor(self.label_csv.iloc[idx, 'label'])
-        img = Image.open(img_path)
+        img_path = os.path.join(self.img_folder, self.label_csv.loc[idx, 'img_path'])
+        lab = torch.tensor(int(self.label_csv.loc[idx, 'label']))
+
+        img_array = cv2.imread(img_path)
+
+        img = Image.fromarray(img_array, mode='RGB')
         if self.transforms:
             img = self.transforms(img)
         if self.include_index:
             return img, lab, idx
         else:
             return img, lab
+
 
 class ReturnIndexDataset(datasets.ImageFolder):
     def __getitem__(self, idx):
@@ -114,7 +127,7 @@ class GetDatasets():
 
     def get_datasets(self, official_split, transforms, include_index=False):
         #transforms = ToTensor()
-        if self.dataset_name in ['ImageNet', 'IMAGENETTE', 'Flower']:
+        if self.dataset_name in ['ImageNet', 'IMAGENETTE']:
             if self.dataset_name == 'ImageNet':
                 # Train: 1,281,167 images
                 # Val: 50,000 images
@@ -156,18 +169,18 @@ class GetDatasets():
 
                 img_folder = os.path.join(target_path, 'oxford-102-flowers')
                 if 'train' in official_split:
-                    label_path_list = [os.path.join(img_folder, 'jpg', 'train.txt'),
-                                   os.path.join(img_folder, 'jpg', 'valid.txt')]
+                    label_path_list = [os.path.join(img_folder, 'train.txt'),
+                                   os.path.join(img_folder, 'valid.txt')]
                 elif 'val' in official_split:
-                    label_path_list = [os.path.join(img_folder, 'jpg', 'test.txt')]
+                    label_path_list = [os.path.join(img_folder, 'test.txt')]
 
                 dataset = FlowerDataset(img_folder=img_folder, label_path_list=label_path_list, transforms=transforms, include_index=include_index)
             elif self.dataset_name == 'CBISDDSM':
                 # Number of classes: 2 {'0': 'calcification'-1511 images, '1': 'mass'-1592 images}
                 # Number of images: 3103 images from 1566 patients
                 # Data split on patient-level 80% train, 20% val, resulting 1252 train patients and 314 val patients
-                # Train: 2484 images ('0' - 1203 images, '1' - 1281 images)
-                # Val: 619 images ('0' -308 images, '1' - 311 images)
+                # Train: 2484 images ('0' - 1203 images, '1' - 1281 images), resulting images 2419
+                # Val: 619 images ('0' -308 images, '1' - 311 images), resulting images 606
                 target_path = os.path.join(self.data_folder, "CBISDDSM")
                 img_folder = os.path.join(target_path, 'imgs')
                 csv_path = os.path.join(target_path, 'ddsm_csv_for_dataset.csv')
@@ -277,6 +290,9 @@ class DataAugmentationDINO(object):
     def __init__(self, augmentations, global_crops_scale, local_crops_scale, local_crops_number, full_size, global_size, local_size):
         normalize = transforms.Compose([transforms.ToTensor(),
                                         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),])
+        normalize_ddsm = transforms.Compose([transforms.ToTensor(),
+                                        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),])
+
         self.transforms_plain = transforms.Compose([
             transforms.Resize(full_size, interpolation=3),
             transforms.CenterCrop(global_size),
