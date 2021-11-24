@@ -290,8 +290,12 @@ class DataAugmentationDINO(object):
     def __init__(self, augmentations, global_crops_scale, local_crops_scale, local_crops_number, full_size, global_size, local_size):
         normalize = transforms.Compose([transforms.ToTensor(),
                                         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),])
+
+        # normalize_ddsm = transforms.Compose([transforms.ToTensor(),
+        #                                      transforms.Normalize((0.286, 0.286, 0.286), (0.267, 0.267, 0.267)),])
+
         normalize_ddsm = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Normalize((0.286, 0.286, 0.286), (0.267, 0.267, 0.267)),])
+                                             transforms.Normalize((0.2921, 0.2921, 0.2921), (0.2563, 0.2563, 0.2563)),])
 
         self.transforms_plain = transforms.Compose([
             transforms.Resize(full_size, interpolation=3),

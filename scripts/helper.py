@@ -433,6 +433,17 @@ def dist_gather_tensor(tensor, mode='all', dst_rank=0, concatenate=True, cat_dim
 
     return tensor_list
 
+def compute_stats(dataloader):
+    from tqdm import tqdm
+    x_tot = 0
+    x2_tot = 0
+    for img, _ in tqdm(dataloader):
+        x_tot += img.mean([0,2,3])
+        x2_tot += (img**2).mean([0,2,3])
+
+    channel_avr = x_tot/len(dataloader)
+    channel_std = np.sqrt(x2_tot/len(dataloader) - channel_avr**2)
+    return channel_avr, channel_std
 
 def print_layers(model):
     names = []

@@ -110,7 +110,7 @@
                     "freeze_last_layer": 1,
                     },
 "system_params": {"num_gpus": 2,
-                  "gpu_ids": "4,5",
+                  "gpu_ids": "0,1",
                   "random_seed": 0,
                   "use_fp16": False # """Whether or not to use half precision for training. Improves training time and memory requirements,
                                     #  but can provoke instability and slight decay of performance. We recommend disabling
