@@ -98,6 +98,8 @@ def parse_args(params_path=None):
             model_name = model_name + '_finetuning_official'
         elif args['start_training']['train_finetuning']['ckp_path_choice'] == "Ours":
             model_name = model_name + '_finetuning_ours'
+        elif args['start_training']['train_finetuning']['ckp_path_choice'] == "Random":
+            model_name = model_name + '_random_init'
     model_path = os.path.join(output_dir, model_name)
     print(end='\n\n' + '==' * 50 + '\n\n')
     print('Model is going to be save in ', model_path)
@@ -604,13 +606,19 @@ def eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader
         checkpoint = torch.load(os.path.join(save_params['model_path'], f"checkpoint{epoch:04}.pth"))
         # Set the teacher model as inference (evaluating) time
         teacher_without_ddp.eval()
+        helper.load_state_dict(teacher_without_ddp, checkpoint['teacher'])
     else:
         ckp_path_choice = start_training['train_finetuning']['ckp_path_choice']
-        ckp_path = start_training['train_finetuning']['ckp_path'][ckp_path_choice]
-        print('Loading checkpoint from: ', ckp_path)
-        checkpoint = torch.load(ckp_path)
-        teacher_without_ddp.train()
-    helper.load_state_dict(teacher_without_ddp, checkpoint['teacher'])
+        if ckp_path_choice == 'Official' or ckp_path_choice == 'Ours':
+            ckp_path = start_training['train_finetuning']['ckp_path'][ckp_path_choice]
+            print('Loading checkpoint from: ', ckp_path)
+            checkpoint = torch.load(ckp_path)
+            teacher_without_ddp.train()
+            helper.load_state_dict(teacher_without_ddp, checkpoint['teacher'])
+        else:
+            print('Loading checkpoint from: ranom initialisation')
+            teacher_without_ddp.train()
+    
 
     if mode != 'train_finetuning':
         if 'if_linear' in start_training['eval']['choices']:
@@ -720,10 +728,10 @@ def main(rank, args):
 if __name__ == '__main__':
     # Read params and print them
     # args = parse_args(params_path='yaml/ViT-S-16.yaml')
-    # args = parse_args(params_path='yaml/ViT-S-16-CIFAR10.yaml')
-    # args = parse_args(params_path='yaml/ViT-S-16-CIFAR100.yaml')
-    args = parse_args(params_path='yaml/ViT-S-16-Flower.yaml')
-    # args = parse_args(params_path='yaml/ViT-S-16-DDSM.yaml')
+    # args = parse_args(params_path='yaml/ViT-S-16-CIFAR10.yaml') # 1
+    # args = parse_args(params_path='yaml/ViT-S-16-CIFAR100.yaml') # 3
+    # args = parse_args(params_path='yaml/ViT-S-16-Flower.yaml') # 2
+    args = parse_args(params_path='yaml/ViT-S-16-DDSM.yaml') # 4
     # args = parse_args(params_path='yaml/ResNet50.yaml')
 
     # Launch multi-gpu / distributed training

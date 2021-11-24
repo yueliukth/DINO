@@ -10,7 +10,7 @@
                                        "wd": 0,
                                        "val_freq": 1,
                              } },
-                    "train_finetuning": {"ckp_path_choice": "Ours", # "Official", "Ours"
+                    "train_finetuning": {"ckp_path_choice": "Random", # "Official", "Ours", "Random"
                                          "ckp_path":
                                            {"Official": "/storage/yue/dino_models/dino_deitsmall16_pretrain_full_checkpoint_official.pth",
                                             "Ours": "/storage/yue/dino_models/vit_small_ImageNet/checkpoint0099.pth"},
