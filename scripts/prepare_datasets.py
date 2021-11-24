@@ -291,7 +291,7 @@ class DataAugmentationDINO(object):
         normalize = transforms.Compose([transforms.ToTensor(),
                                         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),])
         normalize_ddsm = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),])
+                                        transforms.Normalize((0.286, 0.286, 0.286), (0.267, 0.267, 0.267)),])
 
         self.transforms_plain = transforms.Compose([
             transforms.Resize(full_size, interpolation=3),
@@ -301,6 +301,10 @@ class DataAugmentationDINO(object):
             transforms.RandomResizedCrop(global_size),
             transforms.RandomHorizontalFlip(),
             normalize])
+        self.transforms_plain_for_lineartrain_ddsm = transforms.Compose([
+            transforms.RandomResizedCrop(global_size),
+            transforms.RandomHorizontalFlip(),
+            normalize_ddsm])
         global_transforms1_list = []
         global_transforms2_list = []
         local_transforms_list = []

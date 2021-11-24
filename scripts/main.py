@@ -157,6 +157,7 @@ def prepare_data_model(rank, args):
         augmentation_params['full_size'], augmentation_params['global_size'], augmentation_params['local_size'])
     transforms_plain = transforms_aug.transforms_plain
     transforms_plain_for_lineartrain = transforms_aug.transforms_plain_for_lineartrain
+    transforms_plain_for_lineartrain_ddsm = transforms_aug.transforms_plain_for_lineartrain_ddsm
 
     start_time = time.time()
     dataset_name = dataset_params['dataset_choice']['dataset_name']
@@ -168,7 +169,10 @@ def prepare_data_model(rank, args):
     use_cuda = dataset_class.use_cuda
     train_aug_dataset = dataset_class.get_datasets('train/', transforms_aug)
     train_plain_dataset = dataset_class.get_datasets('train/', transforms_plain, include_index=True)
-    train_plain_for_lineartrain_dataset = dataset_class.get_datasets('train/', transforms_plain_for_lineartrain, include_index=False)
+    if dataset_name == 'CBISDDSM':
+        train_plain_for_lineartrain_dataset = dataset_class.get_datasets('train/', transforms_plain_for_lineartrain_ddsm, include_index=False)
+    else:
+        train_plain_for_lineartrain_dataset = dataset_class.get_datasets('train/', transforms_plain_for_lineartrain, include_index=False)
     val_plain_dataset = dataset_class.get_datasets('val/', transforms_plain, include_index=True)
 
     # if train_plain_dataset.classes != val_plain_dataset.classes:
@@ -727,11 +731,11 @@ def main(rank, args):
 
 if __name__ == '__main__':
     # Read params and print them
-    # args = parse_args(params_path='yaml/ViT-S-16.yaml')
-    # args = parse_args(params_path='yaml/ViT-S-16-CIFAR10.yaml') # 1
-    # args = parse_args(params_path='yaml/ViT-S-16-CIFAR100.yaml') # 3
-    # args = parse_args(params_path='yaml/ViT-S-16-Flower.yaml') # 2
-    args = parse_args(params_path='yaml/ViT-S-16-DDSM.yaml') # 4
+    args = parse_args(params_path='yaml/ViT-S-16.yaml')
+    # args = parse_args(params_path='yaml/ViT-S-16-CIFAR10.yaml')
+    # args = parse_args(params_path='yaml/ViT-S-16-CIFAR100.yaml')
+    # args = parse_args(params_path='yaml/ViT-S-16-Flower.yaml')
+    # args = parse_args(params_path='yaml/ViT-S-16-DDSM.yaml')
     # args = parse_args(params_path='yaml/ResNet50.yaml')
 
     # Launch multi-gpu / distributed training

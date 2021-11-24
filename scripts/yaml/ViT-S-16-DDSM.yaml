@@ -10,7 +10,7 @@
                                        "wd": 0,
                                        "val_freq": 1,
                              } },
-                    "train_finetuning": {"ckp_path_choice": "Random", # "Official", "Ours", "Random"
+                    "train_finetuning": {"ckp_path_choice": "Official", # "Official", "Ours", "Random"
                                          "ckp_path":
                                            {"Official": "/storage/yue/dino_models/dino_deitsmall16_pretrain_full_checkpoint_official.pth",
                                             "Ours": "/storage/yue/dino_models/vit_small_ImageNet/checkpoint0099.pth"},
@@ -110,7 +110,7 @@
                     "freeze_last_layer": 1,
                     },
 "system_params": {"num_gpus": 2,
-                  "gpu_ids": "6,7",
+                  "gpu_ids": "4,5",
                   "random_seed": 0,
                   "use_fp16": False # """Whether or not to use half precision for training. Improves training time and memory requirements,
                                     #  but can provoke instability and slight decay of performance. We recommend disabling
