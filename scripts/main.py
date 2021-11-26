@@ -21,6 +21,7 @@ import helper
 import evaluation
 import prepare_models
 import prepare_datasets
+import prepare_augmentations
 import prepare_losses
 import prepare_trainers
 
@@ -152,12 +153,11 @@ def prepare_data_model(rank, args):
     # ============ Preparing data ... ============
     # Define transformations applied on augmented and plain data
     # The aug_dataset is for training, while plain_datasets is mostly used to compute knn and visualize the embeddings
-    transforms_aug = prepare_datasets.DataAugmentationDINO(dataset_params['augmentations'], augmentation_params['global_crops_scale'],
-        augmentation_params['local_crops_scale'], augmentation_params['local_crops_number'],
+    transforms_aug = prepare_augmentations.DataAugmentationDINO(dataset_params,
+        augmentation_params['global_crops_scale'], augmentation_params['local_crops_scale'], augmentation_params['local_crops_number'],
         augmentation_params['full_size'], augmentation_params['global_size'], augmentation_params['local_size'])
     transforms_plain = transforms_aug.transforms_plain
     transforms_plain_for_lineartrain = transforms_aug.transforms_plain_for_lineartrain
-    transforms_plain_for_lineartrain_ddsm = transforms_aug.transforms_plain_for_lineartrain_ddsm
 
     start_time = time.time()
     dataset_name = dataset_params['dataset_choice']['dataset_name']
@@ -169,10 +169,7 @@ def prepare_data_model(rank, args):
     use_cuda = dataset_class.use_cuda
     train_aug_dataset = dataset_class.get_datasets('train/', transforms_aug)
     train_plain_dataset = dataset_class.get_datasets('train/', transforms_plain, include_index=True)
-    if dataset_name == 'CBISDDSM':
-        train_plain_for_lineartrain_dataset = dataset_class.get_datasets('train/', transforms_plain_for_lineartrain_ddsm, include_index=False)
-    else:
-        train_plain_for_lineartrain_dataset = dataset_class.get_datasets('train/', transforms_plain_for_lineartrain, include_index=False)
+    train_plain_for_lineartrain_dataset = dataset_class.get_datasets('train/', transforms_plain_for_lineartrain, include_index=False)
     val_plain_dataset = dataset_class.get_datasets('val/', transforms_plain, include_index=True)
 
     # if train_plain_dataset.classes != val_plain_dataset.classes:
@@ -482,7 +479,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
 
     # ============ Building model with linear classifier ... ============
     dataset_name = dataset_params['dataset_choice']['dataset_name']
-    num_classes = dataset_params['dataset_choice'][dataset_name]['num_classes']
+    num_labels = dataset_params['dataset_choice'][dataset_name]['num_labels']
     eval_linear = start_training['eval']['linear']
     train_finetuning = start_training['train_finetuning']
     if mode == 'eval':
@@ -505,7 +502,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
     if mode == 'train_finetuning':
         for param in teacher_without_ddp.parameters():
             param.requires_grad = True
-    linear_classifier = evaluation.LinearClassifier(embed_dim, num_classes=num_classes)
+    linear_classifier = evaluation.LinearClassifier(embed_dim, num_classes=num_labels)
     linear_classifier = linear_classifier.cuda()
     linear_classifier = nn.parallel.DistributedDataParallel(linear_classifier, device_ids=[rank])
 
@@ -735,8 +732,8 @@ if __name__ == '__main__':
     # args = parse_args(params_path='yaml/ViT-S-16-CIFAR10.yaml')
     # args = parse_args(params_path='yaml/ViT-S-16-CIFAR100.yaml')
     # args = parse_args(params_path='yaml/ViT-S-16-Flower.yaml')
-    args = parse_args(params_path='yaml/ViT-S-16-DDSM.yaml')
-    # args = parse_args(params_path='yaml/ResNet50.yaml')
+    # args = parse_args(params_path='yaml/ViT-S-16-DDSM.yaml')
+    args = parse_args(params_path='yaml/ResNet50.yaml')
 
     # Launch multi-gpu / distributed training
     helper.launch(main, args)

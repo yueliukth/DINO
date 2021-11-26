@@ -33,31 +33,37 @@
                  "temp_knn": 0.07
                },
  "dataset_params": {"data_folder": "/storage/yue/data/",
-                    "dataset_choice": {"dataset_name": "ImageNet",  # "ImageNet", "IMAGENETTE", "CIFAR10", "CIFAR100", "Flower"
-                                       "ImageNet":
-                                         { "num_classes": 1000,
-                                           "knn_use_cuda": False,
-                                           "label_mapping_path": 'data_label_mapping/ImageNet.json'},
-                                       "IMAGENETTE":
-                                         { "num_classes": 10,
-                                           "knn_use_cuda": False,
-                                           "label_mapping_path": 'data_label_mapping/ImageNet.json'},
-                                       "CIFAR10":
-                                         { "num_classes": 10,
-                                           "knn_use_cuda": False,
-                                           "label_mapping_path": None },
-                                       "CIFAR100":
-                                         { "num_classes": 100,
-                                           "knn_use_cuda": True,
-                                           "label_mapping_path": None },
-                                       "Flower":
-                                         { "num_classes": 102,
-                                           "knn_use_cuda": False,
-                                           "label_mapping_path": 'data_label_mapping/Flower.json' },
-                                       "CBISDDSM":
-                                         { "num_classes": 2,
-                                           "knn_use_cuda": False,
-                                           "label_mapping_path": None },},
+                    "dataset_choice": { "dataset_name": "ImageNet",  # "ImageNet", "IMAGENETTE", "CIFAR10", "CIFAR100"
+                                        "ImageNet":
+                                          { "num_channels": 3,
+                                            "num_labels": 1000,
+                                            "knn_use_cuda": False,
+                                            "label_mapping_path": 'data_label_mapping/ImageNet.json' },
+                                        "IMAGENETTE":
+                                          { "num_channels": 3,
+                                            "num_labels": 10,
+                                            "knn_use_cuda": False,
+                                            "label_mapping_path": 'data_label_mapping/ImageNet.json' },
+                                        "CIFAR10":
+                                          { "num_channels": 3,
+                                            "num_labels": 10,
+                                            "knn_use_cuda": False,
+                                            "label_mapping_path": 'data_label_mapping/CIFAR10.json' },
+                                        "CIFAR100":
+                                          { "num_channels": 3,
+                                            "num_labels": 100,
+                                            "knn_use_cuda": False,
+                                            "label_mapping_path": 'data_label_mapping/CIFAR100.json' },
+                                        "Flower":
+                                          { "num_channels": 3,
+                                            "num_classes": 102,
+                                            "knn_use_cuda": False,
+                                            "label_mapping_path": 'data_label_mapping/Flower.json' },
+                                        "CBISDDSM":
+                                          { "num_channels": 1,
+                                            "num_classes": 2,
+                                            "knn_use_cuda": False,
+                                            "label_mapping_path": None }, },
                     "augmentations": ['RandomResizedCrop', 'RandomHorizontalFlip', 'ColorJitter', 'RandomGrayscale', 'GaussianBlur', 'Solarization' ],
 
    # ['RandomResizedCrop', 'RandomHorizontalFlip', 'ColorJitter', 'RandomGrayscale', 'GaussianBlur', 'Solarization'],
