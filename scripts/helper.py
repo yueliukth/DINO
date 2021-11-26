@@ -382,6 +382,7 @@ def run_distributed_workers(rank, main_func, world_size, dist_url, args):
 
 def launch(main_func, args=()):
     # Set gpu params
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = args['system_params']['gpu_ids']
 
     system_params = args['system_params']

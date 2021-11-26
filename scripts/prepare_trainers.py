@@ -105,7 +105,7 @@ def linear_train_one_epoch(model, linear_classifier, optimizer, data_loader, epo
 
         if mode=='train_finetuning':
             if "vit" in model_params['backbone_option']:
-                intermediate_output = model.get_intermediate_layers(inp, n)
+                intermediate_output = model.module.backbone.get_intermediate_layers(inp, n)
                 output = torch.cat([x[:, 0] for x in intermediate_output], dim=-1)
                 if avgpool:
                     output = torch.cat((output.unsqueeze(-1), torch.mean(intermediate_output[-1][:, 1:], dim=1).unsqueeze(-1)), dim=-1)
@@ -116,7 +116,7 @@ def linear_train_one_epoch(model, linear_classifier, optimizer, data_loader, epo
             # Forward - we do not update the backbone
             with torch.no_grad():
                 if "vit" in model_params['backbone_option']:
-                    intermediate_output = model.get_intermediate_layers(inp, n)
+                    intermediate_output = model.module.backbone.get_intermediate_layers(inp, n)
                     output = torch.cat([x[:, 0] for x in intermediate_output], dim=-1)
                     if avgpool:
                         output = torch.cat((output.unsqueeze(-1), torch.mean(intermediate_output[-1][:, 1:], dim=1).unsqueeze(-1)), dim=-1)

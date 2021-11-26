@@ -1,5 +1,5 @@
 # Original base lr is not good to use
-{"start_training": {"mode": "train_finetuning", # "train" or "eval" or "train_finetuning"
+{"start_training": {"mode": "eval", # "train" or "eval" or "train_finetuning"
                     "eval": {"choices": ["if_linear", "if_knn"], # ["if_embeddings",  "if_knn", "if_linear", "if_throughput"]
                              "epoch": 99,
                              "linear":{"batch_size": 1024,

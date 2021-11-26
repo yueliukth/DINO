@@ -16,6 +16,8 @@ from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import datasets, transforms
 from torchvision import models as torchvision_models
+torch.cuda.empty_cache()
+torch.cuda.memory_summary(device=None, abbreviated=False)
 
 import helper
 import evaluation
@@ -183,10 +185,10 @@ def prepare_data_model(rank, args):
 
     # Set sampler that restricts data loading to a subset of the dataset
     # In conjunction with torch.nn.parallel.DistributedDataParallel
-    train_aug_sampler = torch.utils.data.DistributedSampler(train_aug_dataset, shuffle=True)
-    train_plain_sampler = torch.utils.data.DistributedSampler(train_plain_dataset, shuffle=True)
-    train_plain_for_lineartrain_sampler = torch.utils.data.DistributedSampler(train_plain_for_lineartrain_dataset, shuffle=True)
-    val_plain_sampler = torch.utils.data.DistributedSampler(val_plain_dataset, shuffle=False)
+    train_aug_sampler = torch.utils.data.DistributedSampler(train_aug_dataset, shuffle=True, rank=rank, num_replicas=args['system_params']['num_gpus'])
+    train_plain_sampler = torch.utils.data.DistributedSampler(train_plain_dataset, shuffle=True, rank=rank, num_replicas=args['system_params']['num_gpus'])
+    train_plain_for_lineartrain_sampler = torch.utils.data.DistributedSampler(train_plain_for_lineartrain_dataset, shuffle=True, rank=rank, num_replicas=args['system_params']['num_gpus'])
+    val_plain_sampler = torch.utils.data.DistributedSampler(val_plain_dataset, shuffle=False, rank=rank, num_replicas=args['system_params']['num_gpus'])
 
     # Prepare the data for training with DataLoaders
     # pin_memory makes transferring images from CPU to GPU faster
@@ -502,15 +504,16 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
     if mode == 'train_finetuning':
         for param in teacher_without_ddp.parameters():
             param.requires_grad = True
+    teacher = nn.parallel.DistributedDataParallel(teacher_without_ddp, device_ids=[rank])
     linear_classifier = evaluation.LinearClassifier(embed_dim, num_classes=num_labels)
     linear_classifier = linear_classifier.cuda()
     linear_classifier = nn.parallel.DistributedDataParallel(linear_classifier, device_ids=[rank])
 
     # Log the number of trainable parameters in Tensorboard
     if rank == 0:
-        n_parameters_teacher_without_ddp = sum(p.numel() for p in teacher_without_ddp.backbone.parameters() if p.requires_grad)
-        print('Linear evaluation or finetuning to train: Number of params of the teacher backbone:', n_parameters_teacher_without_ddp)
-        writer.add_text("Linear evaluation or finetuning to train:  Number of params of the teacher backbone", str(n_parameters_teacher_without_ddp))
+        n_parameters_teacher = sum(p.numel() for p in teacher.module.backbone.parameters() if p.requires_grad)
+        print('Linear evaluation or finetuning to train: Number of params of the teacher backbone:', n_parameters_teacher)
+        writer.add_text("Linear evaluation or finetuning to train:  Number of params of the teacher backbone", str(n_parameters_teacher))
 
         n_parameters_linear = sum(p.numel() for p in linear_classifier.parameters() if p.requires_grad)
         print('Linear evaluation or finetuning to train: Number of params of the linear classifier:', n_parameters_linear)
@@ -521,7 +524,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
     elif mode == 'train_finetuning':
         params = [
             {'params': linear_classifier.parameters()},
-            {'params': teacher_without_ddp.backbone.parameters()}
+            {'params': teacher.module.backbone.parameters()}
         ]
     # ============ Preparing optimizer ... ============
     optimizer = torch.optim.SGD(
@@ -539,7 +542,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
         val_plain_dataloader.sampler.set_epoch(epoch)
 
         # ============ Training one epoch of model with linear classifier ... ============
-        train_stats = prepare_trainers.linear_train_one_epoch(teacher_without_ddp.backbone, linear_classifier, optimizer, train_plain_for_lineartrain_dataloader, epoch, \
+        train_stats = prepare_trainers.linear_train_one_epoch(teacher, linear_classifier, optimizer, train_plain_for_lineartrain_dataloader, epoch, \
                                                               n_last_blocks, avgpool_patchtokens, \
                                                               model_params, mode)
         scheduler.step()
@@ -557,7 +560,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()}, 'epoch': epoch}
 
         if epoch % val_freq == 0 or epoch == num_epochs - 1:
-            val_stats = evaluation.validate_network(val_plain_dataloader, teacher_without_ddp.backbone, linear_classifier, n_last_blocks, avgpool_patchtokens, model_params, mode)
+            val_stats = evaluation.validate_network(val_plain_dataloader, teacher.backbone, linear_classifier, n_last_blocks, avgpool_patchtokens, model_params, mode)
             print(f"Accuracy at epoch {epoch} of the network on the validation set: {val_stats['acc1']:.1f}%")
             best_acc = max(best_acc,val_stats['acc1'])
             print(f'Max accuracy so far: {best_acc:.2f}%')
@@ -576,7 +579,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
             save_dict = {"epoch": epoch + 1, "state_dict_linear": linear_classifier.state_dict(),
                          "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(), "best_acc": best_acc}
         elif mode == 'train_finetuning':
-            save_dict = {"epoch": epoch + 1, "state_dict_linear": linear_classifier.state_dict(), "state_dict_backbone": teacher_without_ddp.backbone.state_dict(),
+            save_dict = {"epoch": epoch + 1, "state_dict_linear": linear_classifier.state_dict(), "state_dict_backbone": teacher.backbone.state_dict(),
                          "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(), "best_acc": best_acc}
         if rank == 0:
             if mode == 'eval':
@@ -599,7 +602,7 @@ def eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader
 
     # Record the starting time
     start_time = time.time()
-    
+
     if mode != 'train_finetuning':
         epoch = int(start_training['eval']['epoch'])
         print("Starting DINO evaluation at epoch ", str(epoch))
@@ -617,9 +620,9 @@ def eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader
             teacher_without_ddp.train()
             helper.load_state_dict(teacher_without_ddp, checkpoint['teacher'])
         else:
-            print('Loading checkpoint from: ranom initialisation')
+            print('Loading checkpoint from: random initialisation')
             teacher_without_ddp.train()
-    
+
 
     if mode != 'train_finetuning':
         if 'if_linear' in start_training['eval']['choices']:
@@ -720,20 +723,20 @@ def main(rank, args):
                       train_aug_dataloader, train_plain_dataloader, val_plain_dataloader, label_mapping, use_cuda)
     elif args['start_training']['mode'] == "eval":
         # Start evaluation
-        eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, label_mapping, use_cuda)
+        eval_process(rank, args, writer, teacher, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, label_mapping, use_cuda)
     elif args['start_training']['mode'] == "train_finetuning":
         # Start evaluation
-        eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, label_mapping, use_cuda, 'train_finetuning')
+        eval_process(rank, args, writer, teacher, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, label_mapping, use_cuda, 'train_finetuning')
 
 
 if __name__ == '__main__':
     # Read params and print them
-    # args = parse_args(params_path='yaml/ViT-S-16.yaml')
+    args = parse_args(params_path='yaml/ViT-S-16.yaml')
     # args = parse_args(params_path='yaml/ViT-S-16-CIFAR10.yaml')
     # args = parse_args(params_path='yaml/ViT-S-16-CIFAR100.yaml')
     # args = parse_args(params_path='yaml/ViT-S-16-Flower.yaml')
     # args = parse_args(params_path='yaml/ViT-S-16-DDSM.yaml')
-    args = parse_args(params_path='yaml/ResNet50.yaml')
+    # args = parse_args(params_path='yaml/ResNet50.yaml')
 
     # Launch multi-gpu / distributed training
     helper.launch(main, args)
