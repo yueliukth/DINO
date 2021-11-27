@@ -16,8 +16,6 @@ from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import datasets, transforms
 from torchvision import models as torchvision_models
-torch.cuda.empty_cache()
-torch.cuda.memory_summary(device=None, abbreviated=False)
 
 import helper
 import evaluation
@@ -156,8 +154,8 @@ def prepare_data_model(rank, args):
     # Define transformations applied on augmented and plain data
     # The aug_dataset is for training, while plain_datasets is mostly used to compute knn and visualize the embeddings
     transforms_aug = prepare_augmentations.DataAugmentationDINO(dataset_params,
-        augmentation_params['global_crops_scale'], augmentation_params['local_crops_scale'], augmentation_params['local_crops_number'],
-        augmentation_params['full_size'], augmentation_params['global_size'], augmentation_params['local_size'])
+                                                                augmentation_params['global_crops_scale'], augmentation_params['local_crops_scale'], augmentation_params['local_crops_number'],
+                                                                augmentation_params['full_size'], augmentation_params['global_size'], augmentation_params['local_size'])
     transforms_plain = transforms_aug.transforms_plain
     transforms_plain_for_lineartrain = transforms_aug.transforms_plain_for_lineartrain
 
@@ -185,10 +183,10 @@ def prepare_data_model(rank, args):
 
     # Set sampler that restricts data loading to a subset of the dataset
     # In conjunction with torch.nn.parallel.DistributedDataParallel
-    train_aug_sampler = torch.utils.data.DistributedSampler(train_aug_dataset, shuffle=True, rank=rank, num_replicas=args['system_params']['num_gpus'])
-    train_plain_sampler = torch.utils.data.DistributedSampler(train_plain_dataset, shuffle=True, rank=rank, num_replicas=args['system_params']['num_gpus'])
-    train_plain_for_lineartrain_sampler = torch.utils.data.DistributedSampler(train_plain_for_lineartrain_dataset, shuffle=True, rank=rank, num_replicas=args['system_params']['num_gpus'])
-    val_plain_sampler = torch.utils.data.DistributedSampler(val_plain_dataset, shuffle=False, rank=rank, num_replicas=args['system_params']['num_gpus'])
+    train_aug_sampler = torch.utils.data.DistributedSampler(train_aug_dataset, shuffle=True)
+    train_plain_sampler = torch.utils.data.DistributedSampler(train_plain_dataset, shuffle=True)
+    train_plain_for_lineartrain_sampler = torch.utils.data.DistributedSampler(train_plain_for_lineartrain_dataset, shuffle=True)
+    val_plain_sampler = torch.utils.data.DistributedSampler(val_plain_dataset, shuffle=False)
 
     # Prepare the data for training with DataLoaders
     # pin_memory makes transferring images from CPU to GPU faster
@@ -213,10 +211,10 @@ def prepare_data_model(rank, args):
                                         pin_memory=trainloader_params['pin_memory'],
                                         drop_last=trainloader_params['drop_last'])
     train_plain_for_lineartrain_dataloader = DataLoader(train_plain_for_lineartrain_dataset, sampler=train_plain_for_lineartrain_sampler,
-                                        batch_size=train_batch_size,
-                                        num_workers=trainloader_params['num_workers'],
-                                        pin_memory=trainloader_params['pin_memory'],
-                                        drop_last=trainloader_params['drop_last'])
+                                                        batch_size=train_batch_size,
+                                                        num_workers=trainloader_params['num_workers'],
+                                                        pin_memory=trainloader_params['pin_memory'],
+                                                        drop_last=trainloader_params['drop_last'])
     val_plain_dataloader = DataLoader(val_plain_dataset, sampler=val_plain_sampler,
                                       batch_size=val_batch_size,
                                       num_workers=valloader_params['num_workers'],
@@ -365,10 +363,10 @@ def train_process(rank, args, writer, student, teacher, teacher_without_ddp, tra
 
         # ============ Training one epoch of DINO ... ============
         train_global_avg_stats, train_median_stats, train_avg_stats, train_max_stats, train_value_stats = prepare_trainers.kd_train_one_epoch(epoch, training_params['num_epochs'], student, teacher,
-                                                          teacher_without_ddp, dino_loss, train_aug_dataloader,
-                                                          optimizer, lr_schedule, wd_schedule, momentum_schedule,
-                                                          training_params['clip_grad'],
-                                                          training_params['freeze_last_layer'], fp16_scaler)
+                                                                                                                                              teacher_without_ddp, dino_loss, train_aug_dataloader,
+                                                                                                                                              optimizer, lr_schedule, wd_schedule, momentum_schedule,
+                                                                                                                                              training_params['clip_grad'],
+                                                                                                                                              training_params['freeze_last_layer'], fp16_scaler)
 
         # ============ Writing logs & adding representation embeddings & KNN results in tensorboard ... ============
         # Log the number of training loss in Tensorboard, at every epoch
@@ -504,16 +502,15 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
     if mode == 'train_finetuning':
         for param in teacher_without_ddp.parameters():
             param.requires_grad = True
-    teacher = nn.parallel.DistributedDataParallel(teacher_without_ddp, device_ids=[rank])
     linear_classifier = evaluation.LinearClassifier(embed_dim, num_classes=num_labels)
     linear_classifier = linear_classifier.cuda()
     linear_classifier = nn.parallel.DistributedDataParallel(linear_classifier, device_ids=[rank])
 
     # Log the number of trainable parameters in Tensorboard
     if rank == 0:
-        n_parameters_teacher = sum(p.numel() for p in teacher.module.backbone.parameters() if p.requires_grad)
-        print('Linear evaluation or finetuning to train: Number of params of the teacher backbone:', n_parameters_teacher)
-        writer.add_text("Linear evaluation or finetuning to train:  Number of params of the teacher backbone", str(n_parameters_teacher))
+        n_parameters_teacher_without_ddp = sum(p.numel() for p in teacher_without_ddp.backbone.parameters() if p.requires_grad)
+        print('Linear evaluation or finetuning to train: Number of params of the teacher backbone:', n_parameters_teacher_without_ddp)
+        writer.add_text("Linear evaluation or finetuning to train:  Number of params of the teacher backbone", str(n_parameters_teacher_without_ddp))
 
         n_parameters_linear = sum(p.numel() for p in linear_classifier.parameters() if p.requires_grad)
         print('Linear evaluation or finetuning to train: Number of params of the linear classifier:', n_parameters_linear)
@@ -524,7 +521,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
     elif mode == 'train_finetuning':
         params = [
             {'params': linear_classifier.parameters()},
-            {'params': teacher.module.backbone.parameters()}
+            {'params': teacher_without_ddp.backbone.parameters()}
         ]
     # ============ Preparing optimizer ... ============
     optimizer = torch.optim.SGD(
@@ -532,7 +529,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
         batch_size, # linear scaling rule
         momentum=momentum,
         weight_decay=weight_decay,
-        )
+    )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, num_epochs)
 
     # ============ Start training ... ============
@@ -542,7 +539,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
         val_plain_dataloader.sampler.set_epoch(epoch)
 
         # ============ Training one epoch of model with linear classifier ... ============
-        train_stats = prepare_trainers.linear_train_one_epoch(teacher, linear_classifier, optimizer, train_plain_for_lineartrain_dataloader, epoch, \
+        train_stats = prepare_trainers.linear_train_one_epoch(teacher_without_ddp.backbone, linear_classifier, optimizer, train_plain_for_lineartrain_dataloader, epoch, \
                                                               n_last_blocks, avgpool_patchtokens, \
                                                               model_params, mode)
         scheduler.step()
@@ -560,12 +557,12 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()}, 'epoch': epoch}
 
         if epoch % val_freq == 0 or epoch == num_epochs - 1:
-            val_stats = evaluation.validate_network(val_plain_dataloader, teacher.backbone, linear_classifier, n_last_blocks, avgpool_patchtokens, model_params, mode)
+            val_stats = evaluation.validate_network(val_plain_dataloader, teacher_without_ddp.backbone, linear_classifier, n_last_blocks, avgpool_patchtokens, model_params, mode)
             print(f"Accuracy at epoch {epoch} of the network on the validation set: {val_stats['acc1']:.1f}%")
             best_acc = max(best_acc,val_stats['acc1'])
             print(f'Max accuracy so far: {best_acc:.2f}%')
             log_stats = {**{k: v for k, v in log_stats.items()},
-                                **{f'val_{k}': v for k, v in val_stats.items()}}
+                         **{f'val_{k}': v for k, v in val_stats.items()}}
             if rank == 0:
                 if mode == 'eval':
                     writer.add_scalar("train_acc1_linear", val_stats['acc1'], epoch)
@@ -579,7 +576,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
             save_dict = {"epoch": epoch + 1, "state_dict_linear": linear_classifier.state_dict(),
                          "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(), "best_acc": best_acc}
         elif mode == 'train_finetuning':
-            save_dict = {"epoch": epoch + 1, "state_dict_linear": linear_classifier.state_dict(), "state_dict_backbone": teacher.backbone.state_dict(),
+            save_dict = {"epoch": epoch + 1, "state_dict_linear": linear_classifier.state_dict(), "state_dict_backbone": teacher_without_ddp.backbone.state_dict(),
                          "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(), "best_acc": best_acc}
         if rank == 0:
             if mode == 'eval':
@@ -594,7 +591,7 @@ def eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_
           "Top-1 test accuracy: {acc:.1f}".format(acc=best_acc))
     return writer
 
-    
+
 def eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, \
                  label_mapping, use_cuda, mode='eval'):
     start_training, save_params, dataset_params, system_params, dataloader_params, model_params, \
@@ -620,14 +617,14 @@ def eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader
             teacher_without_ddp.train()
             helper.load_state_dict(teacher_without_ddp, checkpoint['teacher'])
         else:
-            print('Loading checkpoint from: random initialisation')
+            print('Loading checkpoint from: ranom initialisation')
             teacher_without_ddp.train()
 
 
     if mode != 'train_finetuning':
         if 'if_linear' in start_training['eval']['choices']:
             writer = eval_linear(rank, writer, train_plain_for_lineartrain_dataloader, val_plain_dataloader, teacher_without_ddp, start_training, dataset_params, model_params, save_params)
-    
+
         if 'if_knn' in start_training['eval']['choices']:
             if rank == 0:
                 print("Adding knn results in tensorboard...")
@@ -660,14 +657,14 @@ def eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader
                                          epoch=epoch,
                                          save_params=save_params,
                                          if_eval=True)
-    
+
                 if rank == 0:
                     print('Saving the calculated embeddings and labels...')
                     torch.save(train_embeddings.cpu(), trainembeddings_path)
                     torch.save(val_embeddings.cpu(), valembeddings_path)
                     torch.save(train_labels.cpu(), trainlabels_path)
                     torch.save(val_labels.cpu(), vallabels_path)
-    
+
         if 'if_embeddings' in start_training['eval']['choices']:
             if rank == 0:
                 print("Adding embeddings in tensorboard...")
@@ -677,12 +674,12 @@ def eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader
             if rank == 0:
                 writer.add_embedding(tb_embeddings, metadata=tb_metatdata, label_img=tb_label_img, global_step=epoch,
                                      tag="embeddings_eval")
-    
+
         if 'if_throughput' in start_training['eval']['choices']:
             print("Calculating throughput...")
             assert system_params['gpu_ids'] == "0"
             assert valloader_params['batch_size'] == 128
-    
+
             device = torch.device("cuda:0")
             teacher_without_ddp.to(device)
             with torch.no_grad():
@@ -723,10 +720,10 @@ def main(rank, args):
                       train_aug_dataloader, train_plain_dataloader, val_plain_dataloader, label_mapping, use_cuda)
     elif args['start_training']['mode'] == "eval":
         # Start evaluation
-        eval_process(rank, args, writer, teacher, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, label_mapping, use_cuda)
+        eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, label_mapping, use_cuda)
     elif args['start_training']['mode'] == "train_finetuning":
         # Start evaluation
-        eval_process(rank, args, writer, teacher, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, label_mapping, use_cuda, 'train_finetuning')
+        eval_process(rank, args, writer, teacher_without_ddp, train_plain_dataloader, train_plain_for_lineartrain_dataloader, val_plain_dataloader, label_mapping, use_cuda, 'train_finetuning')
 
 
 if __name__ == '__main__':

@@ -11,7 +11,7 @@
                                         "val_freq": 1,
                                         "restore_epoch": 0,
                              } },
-                    "train_finetuning": { "ckp_path_choice": "Ours", # "Official", "Ours", "Random"
+                    "train_finetuning": { "ckp_path_choice": "Random", # "Official", "Ours", "Random"
                                           "ckp_path":
                                             { "Official": "/storage/yue/dino_models/dino_deitsmall16_pretrain_full_checkpoint_official.pth",
                                               "Ours": "/storage/yue/dino_models/vit_small_ImageNet/checkpoint0099.pth" },
@@ -70,13 +70,13 @@
  },
 "dataloader_params": {"trainloader":{"batch_size": 512,
                                      "batch_size_for_scheduler": 512,
-                                     "num_workers": 4, # 'Number of data loading workers per GPU.'
+                                     "num_workers": 10, # 'Number of data loading workers per GPU.'
                                      "pin_memory": True,
                                      "drop_last": True},
                       "valloader": { "batch_size": 512, # 128 if if_throughput, otherwise, 512
-                                     "num_workers": 4, # 'Number of data loading workers per GPU.'
-                                     "pin_memory": True,
-                                     "drop_last": True}
+                                     "num_workers": 10, # 'Number of data loading workers per GPU.'
+                                     "pin_memory": False,
+                                     "drop_last": False}
                      },
 "augmentation_params": {"global_crops_scale": [0.25, 1.0],
                         "local_crops_scale": [0.05, 0.25],
