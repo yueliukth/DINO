@@ -728,12 +728,12 @@ def main(rank, args):
 
 if __name__ == '__main__':
     # Read params and print them
-    args = parse_args(params_path='yaml/ViT-S-16.yaml')
+    # args = parse_args(params_path='yaml/ViT-S-16.yaml')
     # args = parse_args(params_path='yaml/ViT-S-16-CIFAR10.yaml')
     # args = parse_args(params_path='yaml/ViT-S-16-CIFAR100.yaml')
     # args = parse_args(params_path='yaml/ViT-S-16-Flower.yaml')
     # args = parse_args(params_path='yaml/ViT-S-16-DDSM.yaml')
-    # args = parse_args(params_path='yaml/ResNet50.yaml')
+    args = parse_args(params_path='yaml/ResNet50.yaml')
 
     # Launch multi-gpu / distributed training
     helper.launch(main, args)

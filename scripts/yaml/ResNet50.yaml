@@ -1,6 +1,6 @@
 # Original base lr is not good to use
 {"start_training": {"mode": "eval", # "train" or "eval" or "train_finetuning"
-                    "eval": {"choices": ["if_linear", "if_knn"], # ["if_embeddings",  "if_knn", "if_linear", "if_throughput"]
+                    "eval": {"choices": ["if_throughput"], # ["if_embeddings",  "if_knn", "if_linear", "if_throughput"]
                              "epoch": 99,
                              "linear":{"batch_size": 1024,
                                        "num_epochs": 100,
@@ -74,7 +74,7 @@
                                      "num_workers": 10, # 'Number of data loading workers per GPU.'
                                      "pin_memory": True,
                                      "drop_last": True},
-                      "valloader": { "batch_size": 512,
+                      "valloader": { "batch_size": 128,
                                      "num_workers": 10, # 'Number of data loading workers per GPU.'
                                      "pin_memory": False,
                                      "drop_last": False}
@@ -117,8 +117,8 @@
                     "clip_grad": 0,
                     "freeze_last_layer": 1,
                     },
-"system_params": {"num_gpus": 8,
-                  "gpu_ids": "0,1,2,3,4,5,6,7",
+"system_params": {"num_gpus": 1,
+                  "gpu_ids": "0",
                   "random_seed": 0,
                   "use_fp16": False # """Whether or not to use half precision for training. Improves training time and memory requirements,
                                     #  but can provoke instability and slight decay of performance. We recommend disabling
